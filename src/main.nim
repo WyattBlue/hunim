@@ -418,7 +418,7 @@ proc getNextToken(self: Lexer): Token =
   return initToken(tkEOF, "")
 
 
-proc convert(pragma: PragmaKind, file: string, path: string) =
+proc convert(pragma: PragmaKind, baseUrl, lang, file, path: string) =
   let text = readFile(file)
   var
     lexer = initLexer(file, text)
@@ -475,7 +475,7 @@ proc convert(pragma: PragmaKind, file: string, path: string) =
 
   f.write(&"""
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{lang}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -497,8 +497,8 @@ proc convert(pragma: PragmaKind, file: string, path: string) =
       url = url.replace(".html", "")
     f.write(&"""
 
-  <link rel="canonical" href="https://basswood-io.com/{url}">
-  <meta property="og:url" content="https://basswood-io.com/{url}">""")
+  <link rel="canonical" href="{baseUrl}/{url}">
+  <meta property="og:url" content="{baseUrl}/{url}">""")
   else:
     f.write("\n  <meta name=\"robots\" content=\"noindex\">")
 
@@ -547,11 +547,19 @@ proc convert(pragma: PragmaKind, file: string, path: string) =
 
 
 when isMainModule:
+  removeDir("public")
+  copyDir("src", "public")
+
+  let table2 = parsetoml.parseFile("hunim.toml")
+
+  let baseUrl = $table2["baseURL"]
+  let lang = $table2["languageCode"]
+
   generateRSSFeed("src/blog/index.xml")
 
-  convert(normalType, "public/blog/index.md", "public/blog/index.html")
+  convert(normalType, baseUrl, lang, "public/blog/index.md", "public/blog/index.html")
   for file in walkFiles("public/blog/*.md"):
-    convert(blogType, file, file.changeFileExt("html"))
+    convert(blogType, baseUrl, lang, file, file.changeFileExt("html"))
 
   processDirectory("public")
   echo "done building"

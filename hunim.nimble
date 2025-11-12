@@ -12,10 +12,14 @@ requires "nim >= 2.2.6"
 requires "parsetoml"
 
 task make, "Export the project":
-  exec "nim c -d:danger src/main.nim"
+  exec "nim c -d:danger --out:hunim src/main.nim"
   when defined(macosx):
     exec "strip -ur hunim"
     exec "stat -f \"%z bytes\" ./hunim"
     echo ""
   when defined(linux):
     exec "strip -s hunim"
+
+task asdf, "Put binary in ~/bin/":
+  echo "hi"
+  exec "cp hunim ~/bin/"
