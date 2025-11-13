@@ -1,4 +1,4 @@
-import std/[algorithm, sequtils, strformat, strutils, times, os, osproc]
+import std/[algorithm, sequtils, strformat, strutils, terminal, times, os, osproc]
 
 import parsetoml
 
@@ -545,8 +545,7 @@ proc convert(pragma: PragmaKind, baseUrl, lang, file, path: string) =
 
   removeFile file
 
-
-when isMainModule:
+proc main =
   removeDir("public")
   copyDir("src", "public")
 
@@ -563,4 +562,27 @@ when isMainModule:
 
   processDirectory("public")
   echo "done building"
+
+proc health =
+  var pandocFound = findExe("pandoc") != ""
+  var rsyncFound = findExe("rsync") != ""
+
+  if pandocFound:
+    stdout.styledWriteLine("Can convert markdown to html ", fgGreen, "(pandoc found)")
+  else:
+    stdout.styledWriteLine("Can convert markdown to html ", fgRed, "(pandoc not found)")
+  stdout.resetAttributes()
+
+  if rsyncFound:
+    stdout.styledWriteLine("Can upload to server ", fgGreen, "(rsync found)")
+  else:
+    stdout.styledWriteLine("Can upload to server ", fgRed, "(rsync not found)")
+  stdout.resetAttributes()
+
+
+when isMainModule:
+  if paramCount() < 1:
+    main()
+  elif paramStr(1) == "health":
+    health()
 
