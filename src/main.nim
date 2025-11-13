@@ -1,4 +1,5 @@
 import std/[algorithm, sequtils, strformat, strutils, terminal, times, os, osproc]
+import std/[asynchttpserver, asyncdispatch, uri]
 
 import parsetoml
 
@@ -501,8 +502,8 @@ proc convert(pragma: PragmaKind, baseUrl, lang, file, path: string) =
       url = url.replace(".html", "")
     f.write(&"""
 
-  <link rel="canonical" href="{baseUrl}/{url}">
-  <meta property="og:url" content="{baseUrl}/{url}">""")
+  <link rel="canonical" href="{baseUrl}{url}">
+  <meta property="og:url" content="{baseUrl}{url}">""")
   else:
     f.write("\n  <meta name=\"robots\" content=\"noindex\">")
 
@@ -556,13 +557,16 @@ proc main =
   let table2 = parsetoml.parseFile("hunim.toml")
 
   let baseUrl = $table2["baseURL"]
+  if not baseUrl.endsWith("/"):
+    error "baseURL must end with /"
+
   let lang = $table2["languageCode"]
 
-  generateRSSFeed("src/blog/index.xml")
-
-  convert(normalType, baseUrl, lang, "public/blog/index.md", "public/blog/index.html")
-  for file in walkFiles("public/blog/*.md"):
-    convert(blogType, baseUrl, lang, file, file.changeFileExt("html"))
+  if dirExists("src/blog"):
+    generateRSSFeed("src/blog/index.xml")
+    convert(normalType, baseUrl, lang, "public/blog/index.md", "public/blog/index.html")
+    for file in walkFiles("public/blog/*.md"):
+      convert(blogType, baseUrl, lang, file, file.changeFileExt("html"))
 
   processDirectory("public")
   echo "done building"
@@ -572,6 +576,8 @@ proc health =
   let rsyncFound = findExe("rsync") != ""
   let tomlFound = fileExists("hunim.toml")
 
+  stdout.styledWriteLine("Can convert html/components to html ", fgGreen, "(yes)")
+  stdout.resetAttributes()
   if pandocFound:
     stdout.styledWriteLine("Can convert markdown to html ", fgGreen, "(pandoc found)")
   else:
@@ -596,7 +602,7 @@ proc newSite(siteName: string) =
 
   writeFile(
     "hunim.toml",
-    &"baseURL = 'https://{siteName}.com'\nlanguageCode = 'en-us'\ntitle = '{siteName}'\n"
+    &"baseURL = 'https://{siteName}.com/'\nlanguageCode = 'en-us'\ntitle = '{siteName}'\n"
   )
 
   createDir("components")
@@ -619,6 +625,140 @@ proc newSite(siteName: string) =
 """,
   )
 
+proc getMimeType(filename: string): string =
+  let ext = splitFile(filename).ext.toLowerAscii()
+  case ext
+  of ".html", ".htm":
+    return "text/html; charset=utf-8"
+  of ".css":
+    return "text/css; charset=utf-8"
+  of ".js":
+    return "application/javascript; charset=utf-8"
+  of ".json":
+    return "application/json; charset=utf-8"
+  of ".xml":
+    return "application/xml; charset=utf-8"
+  of ".png":
+    return "image/png"
+  of ".jpg", ".jpeg":
+    return "image/jpeg"
+  of ".gif":
+    return "image/gif"
+  of ".svg":
+    return "image/svg+xml"
+  of ".webp":
+    return "image/webp"
+  of ".avif":
+    return "image/avif"
+  of ".ico":
+    return "image/x-icon"
+  of ".woff":
+    return "font/woff"
+  of ".woff2":
+    return "font/woff2"
+  of ".ttf":
+    return "font/ttf"
+  of ".pdf":
+    return "application/pdf"
+  else:
+    return "application/octet-stream"
+
+proc serveFile(path: string): tuple[code: HttpCode, content: string, mimeType: string] =
+  if not fileExists(path):
+    return (Http404, "404 Not Found", "text/plain")
+
+  try:
+    let content = readFile(path)
+    let mimeType = getMimeType(path)
+    return (Http200, content, mimeType)
+  except IOError:
+    return (Http500, "500 Internal Server Error", "text/plain")
+
+proc getLastModTime(dir: string): Time =
+  var lastMod = fromUnix(0)
+  if not dirExists(dir):
+    return lastMod
+
+  for kind, path in walkDir(dir):
+    if kind == pcFile:
+      let info = getFileInfo(path)
+      if info.lastWriteTime > lastMod:
+        lastMod = info.lastWriteTime
+    elif kind == pcDir:
+      let subdirMod = getLastModTime(path)
+      if subdirMod > lastMod:
+        lastMod = subdirMod
+
+  return lastMod
+
+proc rebuild =
+  stdout.styledWriteLine(fgCyan, "Rebuilding site...")
+  stdout.resetAttributes()
+  try:
+    main()
+  except:
+    stderr.styledWriteLine(fgRed, "Build failed: " & getCurrentExceptionMsg())
+    stderr.resetAttributes()
+
+proc server =
+  # Check if we should watch for changes
+  let watchMode = paramCount() > 1 and paramStr(2) == "--watch"
+
+  if not dirExists("public"):
+    echo "No public directory found. Building..."
+    rebuild()
+
+  let port = 8080
+  let address = "127.0.0.1"
+
+  var httpServer = newAsyncHttpServer()
+  var lastModTime = getLastModTime("src")
+
+  proc handleRequest(req: Request) {.async.} =
+    var path = req.url.path.decodeUrl()
+
+    # Normalize path
+    if path == "" or path == "/":
+      path = "/index.html"
+
+    # Security: prevent directory traversal
+    if path.contains(".."):
+      await req.respond(Http403, "403 Forbidden")
+      return
+
+    # Build full file path
+    let filePath = "public" & path
+
+    # If path is a directory, try to serve index.html
+    if dirExists(filePath):
+      let indexPath = filePath / "index.html"
+      let (code, content, mimeType) = serveFile(indexPath)
+      await req.respond(code, content, newHttpHeaders([("Content-Type", mimeType)]))
+    else:
+      let (code, content, mimeType) = serveFile(filePath)
+      await req.respond(code, content, newHttpHeaders([("Content-Type", mimeType)]))
+
+    echo &"{req.reqMethod} {req.url.path} -> {filePath}"
+
+  proc checkForChanges {.async.} =
+    while true:
+      await sleepAsync(1000)  # Check every second
+      let currentModTime = getLastModTime("src")
+      if currentModTime > lastModTime:
+        lastModTime = currentModTime
+        rebuild()
+
+  stdout.styledWriteLine(fgGreen, &"Server running at http://{address}:{port}/")
+  if watchMode:
+    stdout.styledWriteLine(fgCyan, "Watching for file changes...")
+  stdout.styledWriteLine(fgYellow, "Press Ctrl+C to stop")
+  stdout.resetAttributes()
+
+  if watchMode:
+    asyncCheck checkForChanges()
+
+  waitFor httpServer.serve(Port(port), handleRequest, address)
+
 when isMainModule:
   if paramCount() < 1:
     main()
@@ -630,5 +770,7 @@ when isMainModule:
     if paramCount() < 2:
       error "You must provide a site name"
     newSite(paramStr(2))
+  elif paramStr(1) == "server":
+    server()
   else:
     error &"Unknown command: {paramStr(1)}"
