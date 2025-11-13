@@ -2,6 +2,10 @@ import std/[algorithm, sequtils, strformat, strutils, terminal, times, os, ospro
 
 import parsetoml
 
+proc error(msg: string) =
+  stderr.styledWriteLine(fgRed, bgBlack, msg, resetStyle)
+  quit(1)
+
 proc parseDate(date: string): DateTime =
   # Parse RFC 2822 dates
 
@@ -564,8 +568,9 @@ proc main =
   echo "done building"
 
 proc health =
-  var pandocFound = findExe("pandoc") != ""
-  var rsyncFound = findExe("rsync") != ""
+  let pandocFound = findExe("pandoc") != ""
+  let rsyncFound = findExe("rsync") != ""
+  let tomlFound = fileExists("hunim.toml")
 
   if pandocFound:
     stdout.styledWriteLine("Can convert markdown to html ", fgGreen, "(pandoc found)")
@@ -579,10 +584,51 @@ proc health =
     stdout.styledWriteLine("Can upload to server ", fgRed, "(rsync not found)")
   stdout.resetAttributes()
 
+  if tomlFound:
+    stdout.styledWriteLine("hunim.toml found ", fgGreen, "(true)")
+  else:
+    stdout.styledWriteLine("hunim.toml found ", fgRed, "(false)")
+  stdout.resetAttributes()
+
+proc newSite(siteName: string) =
+  createDir(siteName)
+  setCurrentDir(siteName)
+
+  writeFile(
+    "hunim.toml",
+    &"baseURL = 'https://{siteName}.com'\nlanguageCode = 'en-us'\ntitle = '{siteName}'\n"
+  )
+
+  createDir("components")
+  createDir("src")
+  setCurrentDir("src")
+  writeFile(
+    "index.html",
+    &"""
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{siteName}</title>
+</head>
+<body>
+  <h1>Hello World!</h1>
+</body>
+</html>
+""",
+  )
 
 when isMainModule:
   if paramCount() < 1:
     main()
+  elif paramStr(1) == "version":
+    echo "0.1.0"
   elif paramStr(1) == "health":
     health()
-
+  elif paramStr(1) == "newsite":
+    if paramCount() < 2:
+      error "You must provide a site name"
+    newSite(paramStr(2))
+  else:
+    error &"Unknown command: {paramStr(1)}"
