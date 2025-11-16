@@ -3,6 +3,12 @@ import std/[asynchttpserver, asyncdispatch, uri]
 
 import parsetoml
 
+proc ctrlc() {.noconv.} =
+  echo ""
+  quit(1)
+
+setControlCHook(ctrlc)
+
 proc error(msg: string) =
   stderr.styledWriteLine(fgRed, bgBlack, msg, resetStyle)
   quit(1)
@@ -182,7 +188,7 @@ proc extractMetadata(file: string): BlogPost =
     dateObj: parseDate(date),
   )
 
-proc generateRSSFeed(outputPath: string) =
+proc generateRSSFeed(lang, outputPath: string) =
   var posts: seq[BlogPost] = @[]
 
   # Collect all blog posts
@@ -200,13 +206,13 @@ proc generateRSSFeed(outputPath: string) =
   )
 
   # Generate RSS XML
-  var rssContent = """<?xml version="1.0" encoding="UTF-8"?>
+  var rssContent = &"""<?xml version="1.0" encoding="UTF-8"?>
 <rss xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
   <channel>
     <title>Basswood-io Blog</title>
     <link>https://basswood-io.com</link>
     <description>News from basswood-io</description>
-    <language>en-us</language>
+    <language>{lang}</language>
 """
 
   # Add items
@@ -570,7 +576,7 @@ proc main =
   let lang = $table2["languageCode"]
 
   if dirExists("src/blog"):
-    generateRSSFeed("src/blog/index.xml")
+    generateRSSFeed(lang, "src/blog/index.xml")
     convert(normalType, baseUrl, lang, "public/blog/index.md", "public/blog/index.html")
     for file in walkFiles("public/blog/*.md"):
       convert(blogType, baseUrl, lang, file, file.changeFileExt("html"))
