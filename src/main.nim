@@ -146,7 +146,7 @@ type BlogPost = object
   pubDate: string
   dateObj: DateTime  # For sorting
 
-proc extractMetadata(file: string): BlogPost =
+proc extractMetadata(baseUrl, file: string): BlogPost =
   let text = readFile(file)
   var
     inHeader = false
@@ -174,8 +174,10 @@ proc extractMetadata(file: string): BlogPost =
           date = value
 
   # Convert file path to URL path
-  let urlPath = file.replace("src/blog/", "").replace(".md", "")
-  let link = &"https://basswood-io.com/blog/{urlPath}"
+  assert file.startsWith("public/")
+
+  let urlPath = file[7..<file.len].changeFileExt("")
+  let link = &"{baseUrl}{urlPath}"
 
   return BlogPost(
     title: title,
@@ -186,15 +188,15 @@ proc extractMetadata(file: string): BlogPost =
     dateObj: parseDate(date),
   )
 
-proc generateRSSFeed(lang, outputPath: string) =
+proc generateRSSFeed(lang, baseUrl, inputPath, outputPath: string) =
   var posts: seq[BlogPost] = @[]
 
   # Collect all blog posts
-  for file in walkFiles("src/blog/*.md"):
+  for file in walkFiles(inputPath / "*.md"):
     if file.endsWith("index.md"):
       continue  # Skip index
 
-    let post = extractMetadata(file)
+    let post = extractMetadata(baseUrl, file)
     posts.add(post)
 
   # Sort posts by date (newest first)
@@ -208,7 +210,7 @@ proc generateRSSFeed(lang, outputPath: string) =
 <rss xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
   <channel>
     <title>Basswood-io Blog</title>
-    <link>https://basswood-io.com</link>
+    <link>{baseUrl}</link>
     <description>News from basswood-io</description>
     <language>{lang}</language>
 """
@@ -230,12 +232,12 @@ proc generateRSSFeed(lang, outputPath: string) =
   writeFile(outputPath, rssContent)
   echo "Generated RSS feed at: ", outputPath
 
-func initLexer(name: string, text: string): Lexer =
+func initLexer(name, text: string): Lexer =
   return Lexer(name: name, text: text, currentChar: text[0],
-               state: startState, pos: 0, line: 1, col: 1)
+    state: startState, line: 1, col: 1)
 
 proc error(self: Lexer, msg: string) =
-  write(stderr, &"{self.name}:{self.line}:{self.col} {msg}")
+  stderr.writeLine(&"{self.name}:{self.line}:{self.col} {msg}")
   system.quit(1)
 
 proc advance(self: Lexer) =
@@ -401,7 +403,7 @@ proc getNextToken(self: Lexer): Token =
   return initToken(tkEOF, "")
 
 
-proc convert(pragma: PragmaKind, baseUrl, lang, file, path: string) =
+proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: string) =
   let text = readFile(file)
   var
     lexer = initLexer(file, text)
@@ -415,10 +417,10 @@ proc convert(pragma: PragmaKind, baseUrl, lang, file, path: string) =
   proc parseKeyval(key: string): string =
     var token = getNextToken(lexer)
     if token.kind != tkText:
-      lexer.error("head: expected text")
+      lexer.error(&"key: {key}, Expected text value")
 
     if token.value != key:
-      lexer.error(&"Expected {key}, got {token.value}")
+      lexer.error(&"Expected key: {key}, got {token.value}")
 
     token = getNextToken(lexer)
     if token.kind != keyval:
@@ -433,13 +435,20 @@ proc convert(pragma: PragmaKind, baseUrl, lang, file, path: string) =
     date = parseKeyval("date")
     desc = parseKeyval("desc")
 
-  if getNextToken(lexer).kind != tkBar:
-    lexer.error("head: expected end ---")
+  var token = getNextToken(lexer)
+  while token.kind != tkBar:
+    if token.kind == tkText:
+      token = getNextToken(lexer)
+      if token.kind != keyval:
+        lexer.error("head: expected keyval")
+      token = getNextToken(lexer)
+    elif token.kind != tkBar:
+      lexer.error("head: expected end ---")
 
   let f = open(path, fmWrite)
 
   var reload = ""
-  if paramCount() > 0 and paramStr(1) == "--dev":
+  if doReload:
     reload = """<script>var bfr = '';
   setInterval(function () {
       fetch(window.location).then((response) => {
@@ -547,13 +556,22 @@ proc main =
 
   let lang = $table2["languageCode"]
 
-  if dirExists("src/blog"):
-    generateRSSFeed(lang, "src/blog/index.xml")
-    convert(normalType, baseUrl, lang, "public/blog/index.md", "public/blog/index.html")
-    for file in walkFiles("public/blog/*.md"):
-      convert(blogType, baseUrl, lang, file, file.changeFileExt("html"))
+  let doReload = paramCount() > 0 and paramStr(1) == "--dev"
 
-  processDirectory("public")
+  proc convertDirectory(dir: string, isFeed: bool) =
+    for kind, path in walkDir(dir):
+      if kind == pcFile and path.endsWith(".md"):
+        let kind = (if isFeed and not path.endsWith("index.md"): blogType else: normalType)
+        convert(kind, doReload, baseUrl, lang, path, path.changeFileExt("html"))
+      elif kind == pcDir:
+        let indexFile = path / "index.md"
+        let isFeed2 = fileExists(indexFile) and "type: feed" in readFile(indexFile)
+        if isFeed2:
+          generateRSSFeed(lang, baseUrl, path, path / "index.xml")
+        convertDirectory(path, isFeed2)
+
+  convertDirectory("public", false)  # Markdown -> HTML
+  processDirectory("public")  # Handle components
   echo "done building"
 
 proc health =
