@@ -541,7 +541,14 @@ proc convert(pragma: PragmaKind, baseUrl, lang, file, path: string) =
 """)
 
   let forPandoc = text[lexer.pos..^1]
-  f.write(execCmdEx("pandoc --from markdown --to html5", input = forPandoc).output)
+  var htmlOutput = execCmdEx("pandoc --from markdown --to html5", input = forPandoc).output
+
+  # Fix relative links in index pages to use correct directory path
+  if path.endsWith("/index.html"):
+    let dir = path.replace("public/", "/").replace("/index.html", "/")
+    htmlOutput = htmlOutput.replace("href=\"./", "href=\"" & dir)
+
+  f.write(htmlOutput)
 
   if pragma == blogType:
     f.write("<hr><a href=\"./\">Blog Index</a>\n")
@@ -660,6 +667,16 @@ proc getMimeType(filename: string): string =
     return "font/ttf"
   of ".pdf":
     return "application/pdf"
+  of "":
+    # Files without extension - check if they're HTML by reading first few bytes
+    if fileExists(filename):
+      try:
+        let content = readFile(filename)
+        if content.startsWith("<!DOCTYPE html") or content.startsWith("<html"):
+          return "text/html; charset=utf-8"
+      except:
+        discard
+    return "application/octet-stream"
   else:
     return "application/octet-stream"
 
@@ -703,10 +720,6 @@ proc rebuild =
 proc server =
   # Check if we should watch for changes
   let watchMode = paramCount() > 1 and paramStr(2) == "--watch"
-
-  if not dirExists("public"):
-    echo "No public directory found. Building..."
-    rebuild()
 
   let port = 8080
   let address = "127.0.0.1"
@@ -771,6 +784,7 @@ when isMainModule:
       error "You must provide a site name"
     newSite(paramStr(2))
   elif paramStr(1) == "server":
+    rebuild()
     server()
   else:
     error &"Unknown command: {paramStr(1)}"

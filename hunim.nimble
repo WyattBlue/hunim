@@ -20,6 +20,6 @@ task make, "Export the project":
   when defined(linux):
     exec "strip -s hunim"
 
-task asdf, "Put binary in ~/bin/":
-  echo "hi"
+task bin, "Put binary in ~/bin/":
   exec "cp hunim ~/bin/"
+  echo "Put hunim in ~/bin/"
