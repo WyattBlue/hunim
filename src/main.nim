@@ -128,14 +128,12 @@ type
     headState,
     normalState,
     blockState,
-    linkState,
 
   Lexer = ref object
     name: string
     text: string
     currentChar: char
     state: State
-    langName: string
     pos: int
     line: int
     col: int
@@ -234,7 +232,7 @@ proc generateRSSFeed(lang, outputPath: string) =
 
 func initLexer(name: string, text: string): Lexer =
   return Lexer(name: name, text: text, currentChar: text[0],
-               state: startState, langName: "", pos: 0, line: 1, col: 1)
+               state: startState, pos: 0, line: 1, col: 1)
 
 proc error(self: Lexer, msg: string) =
   write(stderr, &"{self.name}:{self.line}:{self.col} {msg}")
@@ -268,30 +266,9 @@ proc getNextToken(self: Lexer): Token =
   var rod = ""
   var levels = 0
   while self.currentChar != '\0':
-    if self.state == linkState:
-      rod = ""
-      while self.currentChar != ')':
-        rod &= self.currentChar
-        self.advance()
-      self.advance()
-      self.state = normalState
-      return initToken(tkText, rod)  # return link ref
     if self.currentChar == '\n':
       self.advance()
       return initToken(tkNewline, "")
-
-    if self.state == normalState and self.currentChar == '[':  # Handle links
-      self.advance()
-      rod = ""
-      while self.currentChar != ']':
-        rod &= self.currentChar
-        self.advance()
-      self.advance()
-      if self.currentChar != '(':
-        self.error("link expected ref")
-      self.advance()
-      self.state = linkState
-      return initToken(tkLink, rod)
 
     if self.state == normalState and self.currentChar == '`':  # Handle code ticks
       while self.currentChar == '`':
@@ -311,13 +288,8 @@ proc getNextToken(self: Lexer): Token =
         return initToken(tkTick, rod)
       elif levels == 3:
         self.state = blockState
-
-        var langName = ""
         while not (self.currentChar in @['\n', '\0']):
-          langName &= self.currentChar
           self.advance()
-
-        self.langName = langName
         return initToken(tkBlock, "")
       elif levels != 0:
         self.error(&"Wrong number of `s, ({levels})")
