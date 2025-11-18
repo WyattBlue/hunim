@@ -1,4 +1,4 @@
-import std/[algorithm, sequtils, strformat, strutils, terminal, times, os, osproc]
+import std/[algorithm, sequtils, strformat, strutils, terminal, times, os, osproc, tables]
 import std/[asynchttpserver, asyncdispatch, uri]
 
 import parsetoml
@@ -61,6 +61,13 @@ proc parseTemplate(content: string, compName: string, compContent: string): stri
     startIdx = openIdx + replacedContent.len
 
   return newContent
+
+proc renderTemplate(templateContent: string, context: Table[string, string]): string =
+  # Renders a Go-style template by replacing {{ .Key }} with context values
+  var result = templateContent
+  for key, value in context:
+    result = result.replace("{{ ." & key & " }}", value)
+  return result
 
 proc processFile(path: string) =
   if not shouldProcessFile(path):
@@ -410,6 +417,8 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
     author = ""
     date = ""
     desc = ""
+    templateFile = ""
+    metadata = initTable[string, string]()
 
   if getNextToken(lexer).kind != tkBar:
     error(lexer, "Expected --- at start")
@@ -438,14 +447,21 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
   var token = getNextToken(lexer)
   while token.kind != tkBar:
     if token.kind == tkText:
+      let key = token.value
       token = getNextToken(lexer)
       if token.kind != keyval:
         lexer.error("head: expected keyval")
+      metadata[key] = token.value
       token = getNextToken(lexer)
     elif token.kind != tkBar:
       lexer.error("head: expected end ---")
 
-  let f = open(path, fmWrite)
+  # Get template from metadata, default to "default.html"
+  templateFile = metadata.getOrDefault("template", "default.html")
+
+  # Check if template file exists
+  let templatePath = "templates" / templateFile
+  let useTemplate = fileExists(templatePath)
 
   var reload = ""
   if doReload:
@@ -465,46 +481,17 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
       });
   }, 1000);</script>"""
 
-  f.write(&"""
-<!DOCTYPE html>
-<html lang="{lang}">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{title}</title>""")
+  # Process markdown content
+  let forPandoc = text[lexer.pos..^1]
+  var htmlOutput = execCmdEx("pandoc --from markdown --to html5", input = forPandoc).output
 
-  if desc != "no-index":
-    f.write(&"""
+  # Fix relative links in index pages to use correct directory path
+  if path.endsWith("/index.html"):
+    let dir = path.replace("public/", "/").replace("/index.html", "/")
+    htmlOutput = htmlOutput.replace("href=\"./", "href=\"" & dir)
 
-  <meta property="og:title" content="{title}">""")
-
-  if desc != "" and desc != "no-index":
-    f.write(&"\n  <meta name=\"description\" content=\"{desc}\">")
-
-  if desc != "no-index":
-    var url = path.replace("src/", "")
-    if url.endswith("/index.html"):
-      url = url.replace("/index.html", "")
-    else:
-      url = url.replace(".html", "")
-    f.write(&"""
-
-  <link rel="canonical" href="{baseUrl}{url}">
-  <meta property="og:url" content="{baseUrl}{url}">""")
-  else:
-    f.write("\n  <meta name=\"robots\" content=\"noindex\">")
-
-  f.write(&"""
-
-  <link rel="stylesheet" href="/style.css?v=1.0.0">
-  <link media="(prefers-color-scheme: light)" rel="icon" type="image/png" href="/favicon/light.png" sizes="90x90">
-  <link media="(prefers-color-scheme: dark)" rel="icon" type="image/png" href="/favicon/dark.png" sizes="90x90">{reload}
-</head>
-<body>
-<section class="section">
-<div class="container">
-""")
-
+  # Prepare content for rendering
+  var content = ""
   if pragma == blogType:
     # Format date for HTML display
     let displayDate =
@@ -518,30 +505,74 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
         let parsedDate = parse(datePart, "dd MMM yyyy")
         format(parsedDate, "MMMM d, yyyy")
 
+    content = &"""<h1>{title}</h1>
+<div style="display: flex; align-items: center; gap: 12px">
+  <img src="/img/profile.jpg" width="30" height="30" style="border-radius: 9999px; margin-right: -6px">
+  <p style="margin-block-end: 0.4em;">{author}</p>
+  <p style="margin-block-end: 0.4em;">{displayDate}</p>
+</div>
+{htmlOutput}
+<hr><a href="./">Blog Index</a>
+"""
+  else:
+    content = htmlOutput
+
+  # Prepare meta tags
+  var metaTags = ""
+  if desc != "no-index":
+    metaTags &= &"\n  <meta property=\"og:title\" content=\"{title}\">"
+
+  if desc != "" and desc != "no-index":
+    metaTags &= &"\n  <meta name=\"description\" content=\"{desc}\">"
+
+  if desc != "no-index":
+    var url = path.replace("src/", "")
+    if url.endswith("/index.html"):
+      url = url.replace("/index.html", "")
+    else:
+      url = url.replace(".html", "")
+    metaTags &= &"\n  <link rel=\"canonical\" href=\"{baseUrl}{url}\">"
+    metaTags &= &"\n  <meta property=\"og:url\" content=\"{baseUrl}{url}\">"
+  else:
+    metaTags &= "\n  <meta name=\"robots\" content=\"noindex\">"
+
+  let f = open(path, fmWrite)
+
+  if useTemplate:
+    # Use template rendering
+    let templateContent = readFile(templatePath)
+    var context = initTable[string, string]()
+    context["Title"] = title
+    context["Content"] = content
+    context["Lang"] = lang
+    context["MetaTags"] = metaTags
+    context["Reload"] = reload
+
+    let renderedHtml = renderTemplate(templateContent, context)
+    f.write(renderedHtml)
+  else:
+    # Fall back to old hardcoded HTML generation
     f.write(&"""
-    <h1>{title}</h1>
-    <div style="display: flex; align-items: center; gap: 12px">
-      <img src="/img/profile.jpg" width="30" height="30" style="border-radius: 9999px; margin-right: -6px">
-      <p style="margin-block-end: 0.4em;">{author}</p>
-      <p style="margin-block-end: 0.4em;">{displayDate}</p>
-    </div>
+<!DOCTYPE html>
+<html lang="{lang}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{title}</title>{metaTags}
+  <link media="(prefers-color-scheme: light)" rel="icon" type="image/png" href="/favicon/light.png" sizes="90x90">
+  <link media="(prefers-color-scheme: dark)" rel="icon" type="image/png" href="/favicon/dark.png" sizes="90x90">{reload}
+</head>
+<body>
+<section class="section">
+<div class="container">
+{content}
+</div>
+</section>
+</body>
+</html>
 """)
 
-  let forPandoc = text[lexer.pos..^1]
-  var htmlOutput = execCmdEx("pandoc --from markdown --to html5", input = forPandoc).output
-
-  # Fix relative links in index pages to use correct directory path
-  if path.endsWith("/index.html"):
-    let dir = path.replace("public/", "/").replace("/index.html", "/")
-    htmlOutput = htmlOutput.replace("href=\"./", "href=\"" & dir)
-
-  f.write(htmlOutput)
-
-  if pragma == blogType:
-    f.write("<hr><a href=\"./\">Blog Index</a>\n")
-  f.write("</div>\n</section>\n</body>\n</html>\n")
   f.close()
-
   removeFile file
 
 proc main =
