@@ -21,11 +21,22 @@ proc parseDate(date: string): DateTime =
   let timezone = explode[1]
 
   result = parse(date2, "ddd, dd MMM yyyy HH:mm:ss")
-
   case timezone:
     of "EDT": result -= initDuration(hours = -4)
     of "EST": result -= initDuration(hours = -5)
-    else: quit(1)
+    of "CDT": result -= initDuration(hours = -5)
+    of "CST": result -= initDuration(hours = -6)
+    of "MDT": result -= initDuration(hours = -6)
+    of "MST": result -= initDuration(hours = -7)
+    of "PDT": result -= initDuration(hours = -7)
+    of "PST": result -= initDuration(hours = -8)
+    of "AKDT": result -= initDuration(hours = -8)
+    of "AKST": result -= initDuration(hours = -9)
+    of "HST": result -= initDuration(hours = -10)
+    of "UTC": discard
+    else: error &"Unknown time zone: {timezone}"
+
+  return result
 
 
 func shouldProcessFile(path: string): bool =
@@ -349,7 +360,7 @@ proc getNextToken(self: Lexer): Token =
   return initToken(tkEOF, "")
 
 
-proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: string): string =
+proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: string, feedDir: string = ""): string =
   let text = readFile(file)
   var
     lexer = initLexer(file, text)
@@ -395,8 +406,20 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
     elif token.kind != tkBar:
       lexer.error("head: expected end ---")
 
-  # Get template from metadata, default to "default.html"
-  templateFile = metadata.getOrDefault("template", "default.html")
+  # Get template from metadata, or use implicit template for feed posts
+  if pragma == blogType and feedDir != "":
+    # Extract directory name from feedDir (e.g., "public/myblog" -> "myblog")
+    let dirName = feedDir.split('/')[^1]
+    let implicitTemplate = dirName & "_list.html"
+    let implicitTemplatePath = "templates" / implicitTemplate
+
+    # Use implicit template if it exists, otherwise fall back to metadata or default
+    if fileExists(implicitTemplatePath):
+      templateFile = implicitTemplate
+    else:
+      templateFile = metadata.getOrDefault("template", "default.html")
+  else:
+    templateFile = metadata.getOrDefault("template", "default.html")
 
   # Get desc from metadata if not already set (for non-blog pages)
   if desc == "" and metadata.hasKey("desc"):
@@ -434,31 +457,7 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
     htmlOutput = htmlOutput.replace("href=\"./", "href=\"" & dir)
 
   # Prepare content for rendering
-  var content = ""
-  if pragma == blogType:
-    # Format date for HTML display
-    let displayDate =
-      try:
-        # Try to parse RFC 2822 format with timezone abbreviation
-        let parsedDate = parse(date, "ddd, dd MMM yyyy HH:mm:ss zzz")
-        format(parsedDate, "MMMM d, yyyy")
-      except:
-        # Try without timezone parsing, just use the date part
-        let datePart = date.split(" ")[1..3].join(" ")  # Extract "29 Jul 2024"
-        let parsedDate = parse(datePart, "dd MMM yyyy")
-        format(parsedDate, "MMMM d, yyyy")
-
-    content = &"""<h1>{title}</h1>
-<div style="display: flex; align-items: center; gap: 12px">
-  <img src="/img/profile.jpg" width="30" height="30" style="border-radius: 9999px; margin-right: -6px">
-  <p style="margin-block-end: 0.4em;">{author}</p>
-  <p style="margin-block-end: 0.4em;">{displayDate}</p>
-</div>
-{htmlOutput}
-<hr><a href="./">Blog Index</a>
-"""
-  else:
-    content = htmlOutput
+  var content = htmlOutput
 
   # Prepare meta tags
   var metaTags = ""
@@ -488,6 +487,20 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
     let templateContent = readFile(templatePath)
     var context = initTable[string, string]()
     context["Title"] = title
+    if pragma == blogType:
+      let displayDate =
+        try:
+          # Try to parse RFC 2822 format with timezone abbreviation
+          let parsedDate = parse(date, "ddd, dd MMM yyyy HH:mm:ss zzz")
+          format(parsedDate, "MMMM d, yyyy")
+        except:
+          # Try without timezone parsing, just use the date part
+          let datePart = date.split(" ")[1..3].join(" ")  # Extract "29 Jul 2024"
+          let parsedDate = parse(datePart, "dd MMM yyyy")
+          format(parsedDate, "MMMM d, yyyy")
+      context["Date"] = displayDate
+      context["Author"] = author
+
     context["Content"] = content
     context["Lang"] = lang
     context["MetaTags"] = metaTags
@@ -542,7 +555,8 @@ proc main =
     for kind, path in walkDir(dir):
       if kind == pcFile and path.endsWith(".md"):
         let kind = (if isFeed and not path.endsWith("index.md"): blogType else: normalType)
-        let url = convert(kind, doReload, baseUrl, lang, path, path.changeFileExt("html"))
+        let feedDir = (if isFeed and not path.endsWith("index.md"): dir else: "")
+        let url = convert(kind, doReload, baseUrl, lang, path, path.changeFileExt("html"), feedDir)
         if url != "":
           sitemapUrls.add(url)
       elif kind == pcDir:
