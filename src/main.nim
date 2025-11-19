@@ -64,14 +64,19 @@ proc parseTemplate(content: string, compName: string, compContent: string): stri
 
 proc renderTemplate(templateContent: string, context: Table[string, string]): string =
   # Renders a Go-style template by replacing {{ .Key }} with context values
-  var result = templateContent
+  result = templateContent
   for key, value in context:
     result = result.replace("{{ ." & key & " }}", value)
   return result
 
-proc processFile(path: string) =
+proc processFile(path: string, baseUrl: string): string =
+  # Skip non-HTML files
+  let ext = path.splitFile().ext.toLowerAscii()
+  if ext != ".html":
+    return ""
+
   if not shouldProcessFile(path):
-    return
+    return ""
 
   var content = readFile(path)
 
@@ -80,27 +85,52 @@ proc processFile(path: string) =
     if kind == pcFile and not compName.startsWith("."):
       let compContent = readFile(comp).strip()
       content = parseTemplate(content, compName, compContent)
-  
+
   var outputPath = path
+  var wasRenamed = false
   if path.endsWith("index.html"):
     outputPath = path
   elif path.endsWith(".html"):
     outputPath = path.splitFile().dir / path.splitFile().name
+    wasRenamed = true
 
   writeFile(outputPath, content)
-  
+
   if outputPath != path:
     removeFile(path)
     echo "Processed and renamed: ", path, " -> ", outputPath
   else:
     echo "Processed: ", path
 
-proc processDirectory(dir: string) =
+  # Only add to sitemap if this is an index.html file
+  # Non-index HTML files that get renamed were generated from markdown
+  # and already added to sitemap during conversion
+  if wasRenamed:
+    return ""
+
+  # Check if page has noindex meta tag
+  if content.contains("<meta name=\"robots\" content=\"noindex\">"):
+    return ""
+
+  # Generate URL for sitemap
+  var url = outputPath.replace("public/", "")
+  if url.endsWith("/index.html"):
+    url = url.replace("/index.html", "")
+  elif url == "index.html":
+    url = ""
+  elif url.endsWith(".html"):
+    url = url[0..^6]  # Remove .html extension
+
+  return baseUrl & url
+
+proc processDirectory(dir: string, baseUrl: string, urls: var seq[string]) =
   for kind, path in walkDir(dir):
     if kind == pcFile:
-      processFile(path)
+      let url = processFile(path, baseUrl)
+      if url != "":
+        urls.add(url)
     elif kind == pcDir:
-      processDirectory(path)
+      processDirectory(path, baseUrl, urls)
 
 ################################
 #  Markdown -> HTML converter  #
@@ -238,6 +268,24 @@ proc generateRSSFeed(lang, baseUrl, inputPath, outputPath: string) =
   # Write to file
   writeFile(outputPath, rssContent)
   echo "Generated RSS feed at: ", outputPath
+
+proc writeSitemap(urls: seq[string], outputPath: string) =
+  # Generate sitemap XML
+  var sitemapContent = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+"""
+
+  for url in urls:
+    sitemapContent &= &"""  <url>
+    <loc>{url}</loc>
+  </url>
+"""
+
+  sitemapContent &= "</urlset>"
+
+  # Write to file
+  writeFile(outputPath, sitemapContent)
+  echo "Generated sitemap at: ", outputPath
 
 func initLexer(name, text: string): Lexer =
   return Lexer(name: name, text: text, currentChar: text[0],
@@ -410,7 +458,7 @@ proc getNextToken(self: Lexer): Token =
   return initToken(tkEOF, "")
 
 
-proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: string) =
+proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: string): string =
   let text = readFile(file)
   var
     lexer = initLexer(file, text)
@@ -458,6 +506,10 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
 
   # Get template from metadata, default to "default.html"
   templateFile = metadata.getOrDefault("template", "default.html")
+
+  # Get desc from metadata if not already set (for non-blog pages)
+  if desc == "" and metadata.hasKey("desc"):
+    desc = metadata["desc"]
 
   # Check if template file exists
   let templatePath = "templates" / templateFile
@@ -525,14 +577,16 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
   if desc != "" and desc != "no-index":
     metaTags &= &"\n  <meta name=\"description\" content=\"{desc}\">"
 
+  var sitemapUrl = ""
   if desc != "no-index":
-    var url = path.replace("src/", "")
+    var url = path.replace("public/", "")
     if url.endswith("/index.html"):
       url = url.replace("/index.html", "")
     else:
       url = url.replace(".html", "")
     metaTags &= &"\n  <link rel=\"canonical\" href=\"{baseUrl}{url}\">"
     metaTags &= &"\n  <meta property=\"og:url\" content=\"{baseUrl}{url}\">"
+    sitemapUrl = baseUrl & url
   else:
     metaTags &= "\n  <meta name=\"robots\" content=\"noindex\">"
 
@@ -575,6 +629,8 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
   f.close()
   removeFile file
 
+  return sitemapUrl
+
 proc main =
   removeDir("public")
   copyDir("src", "public")
@@ -589,11 +645,15 @@ proc main =
 
   let doReload = paramCount() > 0 and paramStr(1) == "--dev"
 
+  var sitemapUrls: seq[string] = @[]
+
   proc convertDirectory(dir: string, isFeed: bool) =
     for kind, path in walkDir(dir):
       if kind == pcFile and path.endsWith(".md"):
         let kind = (if isFeed and not path.endsWith("index.md"): blogType else: normalType)
-        convert(kind, doReload, baseUrl, lang, path, path.changeFileExt("html"))
+        let url = convert(kind, doReload, baseUrl, lang, path, path.changeFileExt("html"))
+        if url != "":
+          sitemapUrls.add(url)
       elif kind == pcDir:
         let indexFile = path / "index.md"
         let isFeed2 = fileExists(indexFile) and "type: feed" in readFile(indexFile)
@@ -602,7 +662,8 @@ proc main =
         convertDirectory(path, isFeed2)
 
   convertDirectory("public", false)  # Markdown -> HTML
-  processDirectory("public")  # Handle components
+  processDirectory("public", baseUrl, sitemapUrls)  # Handle components
+  writeSitemap(sitemapUrls, "public/sitemap.xml")  # Generate sitemap
   echo "done building"
 
 proc health =

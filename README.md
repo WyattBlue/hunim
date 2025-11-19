@@ -26,5 +26,5 @@ hunim
 This publishing the files to the `public` directory.
 
 ## Todos
- - [ ] Generating sitemap.xml
+ - [x] Generating sitemap.xml
  - [ ] Drafts
