@@ -132,10 +132,6 @@ proc processDirectory(dir: string, baseUrl: string, urls: var seq[string]) =
     elif kind == pcDir:
       processDirectory(path, baseUrl, urls)
 
-################################
-#  Markdown -> HTML converter  #
-################################
-
 type
   PragmaKind = enum
     normalType,
@@ -145,15 +141,7 @@ type
     tkBar,
     keyval,
     tkText,
-    tkH1,
-    tkH2,
-    tkH3,
     tkNewline,
-    tkTick,
-    tkList,
-    tkUl,
-    tkBlock,
-    tkLink,
     tkEOF,
 
   Token = ref object
@@ -163,8 +151,7 @@ type
   State = enum
     startState,
     headState,
-    normalState,
-    blockState,
+    finalState,
 
   Lexer = ref object
     name: string
@@ -288,8 +275,7 @@ proc writeSitemap(urls: seq[string], outputPath: string) =
   echo "Generated sitemap at: ", outputPath
 
 func initLexer(name, text: string): Lexer =
-  return Lexer(name: name, text: text, currentChar: text[0],
-    state: startState, line: 1, col: 1)
+  Lexer(name: name, text: text, currentChar: text[0], state: startState, line: 1, col: 1)
 
 proc error(self: Lexer, msg: string) =
   stderr.writeLine(&"{self.name}:{self.line}:{self.col} {msg}")
@@ -312,63 +298,15 @@ func peek(self: Lexer): char =
   let peakPos = self.pos + 1
   return (if peakPos > len(self.text) - 1: '\0' else: self.text[peakPos])
 
-func longPeek(self: Lexer, pos: int): char =
-  let peakPos = self.pos + pos
-  return (if peakPos > len(self.text) - 1: '\0' else: self.text[peakPos])
-
 func initToken(kind: TokenKind, value: string): Token =
   return Token(kind: kind, value: value)
 
 proc getNextToken(self: Lexer): Token =
   var rod = ""
-  var levels = 0
   while self.currentChar != '\0':
     if self.currentChar == '\n':
       self.advance()
       return initToken(tkNewline, "")
-
-    if self.state == normalState and self.currentChar == '`':  # Handle code ticks
-      while self.currentChar == '`':
-        levels += 1
-        self.advance()
-
-      if levels == 1:
-        rod = ""
-        while self.currentChar != '`':
-          rod &= self.currentChar
-          self.advance()
-        self.advance()
-
-        if rod.strip() == "":
-          self.error("Tick can't be blank")
-
-        return initToken(tkTick, rod)
-      elif levels == 3:
-        self.state = blockState
-        while not (self.currentChar in @['\n', '\0']):
-          self.advance()
-        return initToken(tkBlock, "")
-      elif levels != 0:
-        self.error(&"Wrong number of `s, ({levels})")
-
-    if self.state == blockState and self.currentChar == '`':
-      levels = 0
-      while longPeek(self, levels) == '`':
-        levels += 1
-        if levels == 5:
-          break
-
-      if levels == 3:
-        self.advance()
-        self.advance()
-        self.advance()
-        self.state = normalState
-        return initToken(tkBlock, "")
-      else:
-        while levels > 0:
-          levels -= 1
-          rod &= '`'
-          self.advance()
 
     rod &= self.currentChar
 
@@ -390,68 +328,21 @@ proc getNextToken(self: Lexer): Token =
       self.advance()
       return initToken(keyval, rod)
 
-    if self.state in @[startState, headState, normalState] and rod == "---":
+    if rod == "---":
       self.advance()
       self.advance()
       if self.state == startState:
         self.state = headState
       elif self.state == headState:
-        self.state = normalState
+        self.state = finalState
       return initToken(tkBar, "")
 
-    var breakToken = false
-    if self.peek() == '\n':
-      breakToken = true
-    elif self.state == normalState and self.peek() == '`':
-      breakToken = true
-    elif self.state == normalState and self.peek() == '[':
-      breakToken = true
-    elif self.state == blockState and self.peek() == '#':
-      breakToken = true
-    elif self.state == headState and self.peek() == ':':
-      breakToken = true
-
-    if breakToken:
+    if self.peek() == '\n' or (self.state == headState and self.peek() == ':'):
       self.advance()
       if rod.strip() == "":
         continue
       else:
         return initToken(tkText, rod)
-
-    if self.state == blockState and self.currentChar == '#' and self.peek() == ' ':
-      self.advance()
-      return initToken(tkH1, "")  # Italicize comments
-
-    if self.state == normalState:
-      if (self.col == 1 and self.currentChar == '*' and self.peek() == ' ') or
-        (self.col == 1 and self.currentChar == ' ' and self.peek() == '*'):
-        self.advance()
-        self.advance()
-        return initToken(tkList, "")
-
-      if self.col == 1 and self.currentChar == ' ' and self.peek() == '-':
-        self.advance()
-        self.advance()
-        return initToken(tkUl, "")
-
-      levels = 0
-      if self.currentChar == '#' and self.col == 1:
-        while self.currentChar == '#':
-          levels += 1
-          self.advance()
-
-        if self.currentChar != ' ':
-          self.error("Expected space after header")
-        self.advance()
-
-        if levels == 3:
-          return initToken(tkH3, "")
-        elif levels == 2:
-          return initToken(tkH2, "")
-        elif levels == 1:
-          return initToken(tkH1, "")
-        elif levels != 0:
-          self.error("Too many #s")
 
     self.advance()
 
