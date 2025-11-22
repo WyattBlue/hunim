@@ -1,4 +1,5 @@
-import std/[algorithm, sequtils, strformat, strutils, terminal, times, os, osproc, tables]
+import std/[algorithm, sequtils, strformat, strutils, terminal, times, os,
+    osproc, tables]
 import std/[asynchttpserver, asyncdispatch, uri]
 
 import parsetoml
@@ -72,7 +73,8 @@ func shouldProcessFile(path: string): bool =
   let ext = path.splitFile().ext.toLowerAscii()
   return ext notin [".avif", ".webp", ".png", ".jpeg", ".jpg", ".svg"]
 
-proc parseTemplate(content: string, compName: string, compContent: string): string =
+proc parseTemplate(content: string, compName: string,
+    compContent: string): string =
   var newContent = content
   var startIdx = 0
   while true:
@@ -99,7 +101,8 @@ proc parseTemplate(content: string, compName: string, compContent: string): stri
 
   return newContent
 
-proc renderTemplate(templateContent: string, context: Table[string, string]): string =
+proc renderTemplate(templateContent: string, context: Table[string,
+    string]): string =
   # Renders a Go-style template by replacing {{ .Key }} with context values
   result = templateContent
   for key, value in context:
@@ -154,7 +157,7 @@ proc processFile(path: string, baseUrl: string): string =
   elif url == "index.html":
     url = ""
   elif url.endsWith(".html"):
-    url = url[0..^6]  # Remove .html extension
+    url = url[0..^6] # Remove .html extension
 
   return baseUrl & url
 
@@ -197,9 +200,9 @@ type
 type BlogPost = object
   title: string
   link: string
-  path: string  # For sorting by date
+  path: string      # For sorting by date
   pubDate: string
-  dateObj: DateTime  # For sorting
+  dateObj: DateTime # For sorting
 
 proc extractMetadata(baseUrl, file: string): BlogPost =
   let text = readFile(file)
@@ -242,13 +245,14 @@ proc extractMetadata(baseUrl, file: string): BlogPost =
     dateObj: parseDate(date),
   )
 
-proc generateRSSFeed(frontmatter: Table[string, string], lang, baseUrl, inputPath, outputPath: string) =
+proc generateRSSFeed(frontmatter: Table[string, string], lang, baseUrl,
+    inputPath, outputPath: string) =
   var posts: seq[BlogPost] = @[]
 
   # Collect all blog posts
   for file in walkFiles(inputPath / "*.md"):
     if file.endsWith("index.md"):
-      continue  # Skip index
+      continue # Skip index
 
     let post = extractMetadata(baseUrl, file)
     posts.add(post)
@@ -308,7 +312,8 @@ proc writeSitemap(urls: seq[string], outputPath: string) =
   echo "Generated sitemap at: ", outputPath
 
 func initLexer(name, text: string): Lexer =
-  Lexer(name: name, text: text, currentChar: text[0], state: startState, line: 1, col: 1)
+  Lexer(name: name, text: text, currentChar: text[0], state: startState,
+      line: 1, col: 1)
 
 proc error(self: Lexer, msg: string) =
   stderr.writeLine(&"{self.name}:{self.line}:{self.col} {msg}")
@@ -344,7 +349,7 @@ proc getNextToken(self: Lexer): Token =
     rod &= self.currentChar
 
     if self.state == headState and self.currentChar == ':':
-      self.advance()  # then go to ` `
+      self.advance() # then go to ` `
       while self.currentChar == ' ':
         self.advance()
 
@@ -521,7 +526,7 @@ proc processConvertedMarkdown(job: ConvertJob, htmlOutput: string): string =
           format(parsedDate, "MMMM d, yyyy")
         except:
           # Try without timezone parsing, just use the date part
-          let datePart = date.split(" ")[1..3].join(" ")  # Extract "29 Jul 2024"
+          let datePart = date.split(" ")[1..3].join(" ") # Extract "29 Jul 2024"
           let parsedDate = parse(datePart, "dd MMM yyyy")
           format(parsedDate, "MMMM d, yyyy")
       context["Date"] = displayDate
@@ -567,7 +572,8 @@ proc main =
     ## Recursively collect all markdown conversion jobs
     for kind, path in walkDir(dir):
       if kind == pcFile and path.endsWith(".md"):
-        let feedDir = (if isFeed and not path.endsWith("index.md"): dir else: "")
+        let feedDir = (if isFeed and not path.endsWith(
+            "index.md"): dir else: "")
         jobs.add(ConvertJob(
           doReload: doReload,
           baseUrl: baseUrl,
@@ -613,7 +619,8 @@ proc main =
     # Start Pandoc process (non-blocking)
     let p = startProcess(
       "pandoc",
-      args = ["--from", "markdown", "--to", "html5", "-o", outputFile, inputFile],
+      args = ["--from", "markdown", "--to", "html5", "-o", outputFile,
+          inputFile],
       options = {poUsePath}
     )
 
@@ -646,8 +653,8 @@ proc main =
 
   # Clean up temp directory
   removeDir(tmpDir)
-  processDirectory("public", baseUrl, sitemapUrls)  # Handle components
-  writeSitemap(sitemapUrls, "public/sitemap.xml")  # Generate sitemap
+  processDirectory("public", baseUrl, sitemapUrls) # Handle components
+  writeSitemap(sitemapUrls, "public/sitemap.xml") # Generate sitemap
   echo "done building"
 
 proc health =
@@ -752,7 +759,8 @@ proc getMimeType(filename: string): string =
   else:
     return "application/octet-stream"
 
-proc serveFile(path: string): tuple[code: HttpCode, content: string, mimeType: string] =
+proc serveFile(path: string): tuple[code: HttpCode, content: string,
+    mimeType: string] =
   if not fileExists(path):
     return (Http404, "404 Not Found", "text/plain")
 
@@ -827,7 +835,7 @@ proc server =
 
   proc checkForChanges {.async.} =
     while true:
-      await sleepAsync(1000)  # Check every second
+      await sleepAsync(1000) # Check every second
       let currentModTime = getLastModTime("src")
       if currentModTime > lastModTime:
         lastModTime = currentModTime
