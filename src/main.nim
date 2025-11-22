@@ -197,7 +197,6 @@ type
 type BlogPost = object
   title: string
   link: string
-  description: string
   path: string  # For sorting by date
   pubDate: string
   dateObj: DateTime  # For sorting
@@ -238,7 +237,6 @@ proc extractMetadata(baseUrl, file: string): BlogPost =
   return BlogPost(
     title: title,
     link: link,
-    description: link,
     path: file,
     pubDate: date,
     dateObj: parseDate(date),
@@ -280,7 +278,7 @@ proc generateRSSFeed(frontmatter: Table[string, string], lang, baseUrl, inputPat
       <title>{post.title}</title>
       <link>{post.link}</link>
       <pubDate>{post.pubDate}</pubDate>
-      <description>{post.description}</description>
+      <description>{post.link}</description>
     </item>
 """
 
