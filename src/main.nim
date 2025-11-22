@@ -168,9 +168,6 @@ proc processDirectory(dir: string, baseUrl: string, urls: var seq[string]) =
       processDirectory(path, baseUrl, urls)
 
 type
-  PragmaKind = enum
-    normalType,
-    blogType,
 
   TokenKind = enum
     tkBar,
@@ -426,7 +423,6 @@ proc nonFrontmatter(file: string): string =
   return text[lexer.pos..^1]
 
 type ConvertJob = object
-  pragma: PragmaKind
   doReload: bool
   baseUrl: string
   lang: string
@@ -439,7 +435,7 @@ proc processConvertedMarkdown(job: ConvertJob, htmlOutput: string): string =
   var templateFile = ""
 
   # Get template from the frontmatter, or use implicit template for feed posts
-  if job.pragma == blogType and job.feedDir != "":
+  if job.feedDir != "":
     # Extract directory name from feedDir (e.g., "public/myblog" -> "myblog")
     let dirName = job.feedDir.split('/')[^1]
     let implicitTemplate = dirName & "_list.html"
@@ -518,7 +514,7 @@ proc processConvertedMarkdown(job: ConvertJob, htmlOutput: string): string =
     var context = initTable[string, string]()
     if frontmatter.hasKey("title"):
       context["Title"] = frontmatter["title"]
-    if job.pragma == blogType and frontmatter.hasKey("date"):
+    if job.feedDir != "" and frontmatter.hasKey("date"):
       let date = frontmatter["date"]
       let displayDate =
         try:
@@ -573,10 +569,8 @@ proc main =
     ## Recursively collect all markdown conversion jobs
     for kind, path in walkDir(dir):
       if kind == pcFile and path.endsWith(".md"):
-        let pragmaKind = (if isFeed and not path.endsWith("index.md"): blogType else: normalType)
         let feedDir = (if isFeed and not path.endsWith("index.md"): dir else: "")
         jobs.add(ConvertJob(
-          pragma: pragmaKind,
           doReload: doReload,
           baseUrl: baseUrl,
           lang: lang,
