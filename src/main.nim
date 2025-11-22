@@ -387,10 +387,9 @@ proc getNextToken(self: Lexer): Token =
   return initToken(tkEOF, "")
 
 
-proc parseFrontmatter(file: string): (Table[string, string], string)=
+proc parseFrontmatter(file: string): Table[string, string] =
   let text = readFile(file)
   var lexer = initLexer(file, text)
-  var frontmatter = initTable[string, string]()
 
   if getNextToken(lexer).kind != tkBar:
     lexer.error("Expected --- at start")
@@ -402,12 +401,29 @@ proc parseFrontmatter(file: string): (Table[string, string], string)=
       token = getNextToken(lexer)
       if token.kind != keyval:
         lexer.error("frontmatter: Expected key value pair")
-      frontmatter[key] = token.value
+      result[key] = token.value
       token = getNextToken(lexer)
     elif token.kind != tkBar:
       lexer.error("frontmatter: Expected --- at the end")
 
-  return (frontmatter, text[lexer.pos..^1])
+proc nonFrontmatter(file: string): string =
+  let text = readFile(file)
+  var lexer = initLexer(file, text)
+
+  if getNextToken(lexer).kind != tkBar:
+    lexer.error("Expected --- at start")
+
+  var token = getNextToken(lexer)
+  while token.kind != tkBar:
+    if token.kind == tkText:
+      token = getNextToken(lexer)
+      if token.kind != keyval:
+        lexer.error("frontmatter: Expected key value pair")
+      token = getNextToken(lexer)
+    elif token.kind != tkBar:
+      lexer.error("frontmatter: Expected --- at the end")
+
+  return text[lexer.pos..^1]
 
 type ConvertJob = object
   pragma: PragmaKind
@@ -419,8 +435,7 @@ type ConvertJob = object
   feedDir: string
 
 proc processConvertedMarkdown(job: ConvertJob, htmlOutput: string): string =
-  ## Process the HTML output from Pandoc and write the final file
-  let (frontmatter, _) = parseFrontmatter(job.file)
+  let frontmatter = parseFrontmatter(job.file)
   var templateFile = ""
 
   # Get template from the frontmatter, or use implicit template for feed posts
@@ -573,17 +588,16 @@ proc main =
         let indexFile = path / "index.md"
         var isFeed2 = false
         if fileExists(indexFile):
-          let (frontmatter, _) = parseFrontmatter(indexFile)
+          let frontmatter = parseFrontmatter(indexFile)
           if frontmatter.hasKey("type") and frontmatter["type"] == "feed":
             isFeed2 = true
             generateRSSFeed(frontmatter, lang, baseUrl, path, path / "index.xml")
         collectJobs(path, isFeed2, jobs)
 
-  # Collect all conversion jobs
   var jobs: seq[ConvertJob] = @[]
   collectJobs("public", false, jobs)
 
-  # Convert all markdown files with truly parallel Pandoc execution
+  # Convert all markdown files with parallel Pandoc execution
   echo &"Converting {jobs.len} markdown files in parallel..."
 
   # Start all Pandoc processes at once using temp files
@@ -599,12 +613,10 @@ proc main =
 
   # Parse frontmatter, write temp files, and start all processes
   for i, job in jobs:
-    let (_, forPandoc) = parseFrontmatter(job.file)
-
     # Write markdown to temp file
     let inputFile = tmpDir / &"input_{i}.md"
     let outputFile = tmpDir / &"output_{i}.html"
-    writeFile(inputFile, forPandoc)
+    writeFile(inputFile, nonFrontmatter(job.file))
 
     # Start Pandoc process (non-blocking)
     let p = startProcess(
