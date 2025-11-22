@@ -549,8 +549,14 @@ proc processConvertedMarkdown(job: ConvertJob, htmlOutput: string): string =
   return sitemapUrl
 
 proc main =
-  removeDir("public")
-  copyDir("src", "public")
+  try:
+    removeDir("public")
+  except Exception:
+    discard
+  try:
+    copyDir("src", "public")
+  except Exception:
+    error "Expected a src directory"
 
   # Load templates and components into cache at startup
   loadTemplates()
@@ -747,7 +753,6 @@ proc getMimeType(filename: string): string =
   of ".pdf":
     return "application/pdf"
   of "":
-    # Files without extension - check if they're HTML by reading first few bytes
     if fileExists(filename):
       try:
         let content = readFile(filename)
