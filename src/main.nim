@@ -109,9 +109,9 @@ proc processFile(path: string, baseUrl: string): string =
 
   if outputPath != path:
     removeFile(path)
-    echo "Processed and renamed: ", path, " -> ", outputPath
-  else:
-    echo "Processed: ", path
+  #   echo "Processed and renamed: ", path, " -> ", outputPath
+  # else:
+  #   echo "Processed: ", path
 
   # Only add to sitemap if this is an index.html file
   # Non-index HTML files that get renamed were generated from markdown
@@ -217,13 +217,13 @@ proc extractMetadata(baseUrl, file: string): BlogPost =
   return BlogPost(
     title: title,
     link: link,
-    description: link,  # Using link as description as seen in the example
+    description: link,
     path: file,
     pubDate: date,
     dateObj: parseDate(date),
   )
 
-proc generateRSSFeed(lang, baseUrl, inputPath, outputPath: string) =
+proc generateRSSFeed(frontmatter: Table[string, string], lang, baseUrl, inputPath, outputPath: string) =
   var posts: seq[BlogPost] = @[]
 
   # Collect all blog posts
@@ -240,13 +240,16 @@ proc generateRSSFeed(lang, baseUrl, inputPath, outputPath: string) =
     result = cmp(y.dateObj, x.dateObj)
   )
 
+  let title = frontmatter.getOrDefault("title", "RSS Feed")
+  let desc = frontmatter.getOrDefault("desc", "My RSS Feed")
+
   # Generate RSS XML
   var rssContent = &"""<?xml version="1.0" encoding="UTF-8"?>
 <rss xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
   <channel>
-    <title>Basswood-io Blog</title>
+    <title>{title}</title>
     <link>{baseUrl}</link>
-    <description>News from basswood-io</description>
+    <description>{desc}</description>
     <language>{lang}</language>
 """
 
@@ -360,39 +363,13 @@ proc getNextToken(self: Lexer): Token =
   return initToken(tkEOF, "")
 
 
-proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: string, feedDir: string = ""): string =
+proc parseFrontmatter(file: string): (Table[string, string], string)=
   let text = readFile(file)
-  var
-    lexer = initLexer(file, text)
-    author = ""
-    date = ""
-    desc = ""
-    templateFile = ""
-    metadata = initTable[string, string]()
+  var lexer = initLexer(file, text)
+  var frontmatter = initTable[string, string]()
 
   if getNextToken(lexer).kind != tkBar:
-    error(lexer, "Expected --- at start")
-
-  proc parseKeyval(key: string): string =
-    var token = getNextToken(lexer)
-    if token.kind != tkText:
-      lexer.error(&"key: {key}, Expected text value")
-
-    if token.value != key:
-      lexer.error(&"Expected key: {key}, got {token.value}")
-
-    token = getNextToken(lexer)
-    if token.kind != keyval:
-      lexer.error("head: expected keyval")
-
-    return token.value
-
-  let title = parseKeyval("title")
-
-  if pragma == blogType:
-    author = parseKeyval("author")
-    date = parseKeyval("date")
-    desc = parseKeyval("desc")
+    lexer.error("Expected --- at start")
 
   var token = getNextToken(lexer)
   while token.kind != tkBar:
@@ -400,30 +377,33 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
       let key = token.value
       token = getNextToken(lexer)
       if token.kind != keyval:
-        lexer.error("head: expected keyval")
-      metadata[key] = token.value
+        lexer.error("frontmatter: Expected key value pair")
+      frontmatter[key] = token.value
       token = getNextToken(lexer)
     elif token.kind != tkBar:
-      lexer.error("head: expected end ---")
+      lexer.error("frontmatter: Expected --- at the end")
 
-  # Get template from metadata, or use implicit template for feed posts
+  return (frontmatter, text[lexer.pos..^1])
+
+proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: string, feedDir: string = ""): string =
+  let (frontmatter, forPandoc) = parseFrontmatter(file)
+  var templateFile = ""
+
+  # Get template from the frontmatter, or use implicit template for feed posts
   if pragma == blogType and feedDir != "":
     # Extract directory name from feedDir (e.g., "public/myblog" -> "myblog")
     let dirName = feedDir.split('/')[^1]
     let implicitTemplate = dirName & "_list.html"
     let implicitTemplatePath = "templates" / implicitTemplate
 
-    # Use implicit template if it exists, otherwise fall back to metadata or default
     if fileExists(implicitTemplatePath):
       templateFile = implicitTemplate
     else:
-      templateFile = metadata.getOrDefault("template", "default.html")
+      templateFile = frontmatter.getOrDefault("template", "default.html")
   else:
-    templateFile = metadata.getOrDefault("template", "default.html")
+    templateFile = frontmatter.getOrDefault("template", "default.html")
 
-  # Get desc from metadata if not already set (for non-blog pages)
-  if desc == "" and metadata.hasKey("desc"):
-    desc = metadata["desc"]
+  let desc = frontmatter.getOrDefault("desc", "")
 
   # Check if template file exists
   let templatePath = "templates" / templateFile
@@ -448,7 +428,6 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
   }, 1000);</script>"""
 
   # Process markdown content
-  let forPandoc = text[lexer.pos..^1]
   var htmlOutput = execCmdEx("pandoc --from markdown --to html5", input = forPandoc).output
 
   # Fix relative links in index pages to use correct directory path
@@ -461,7 +440,8 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
 
   # Prepare meta tags
   var metaTags = ""
-  if desc != "no-index":
+  if desc != "no-index" and frontmatter.hasKey("title"):
+    let title = frontmatter["title"]
     metaTags &= &"\n  <meta property=\"og:title\" content=\"{title}\">"
 
   if desc != "" and desc != "no-index":
@@ -486,8 +466,10 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
     # Use template rendering
     let templateContent = readFile(templatePath)
     var context = initTable[string, string]()
-    context["Title"] = title
-    if pragma == blogType:
+    if frontmatter.hasKey("title"):
+      context["Title"] = frontmatter["title"]
+    if pragma == blogType and frontmatter.hasKey("date"):
+      let date = frontmatter["date"]
       let displayDate =
         try:
           # Try to parse RFC 2822 format with timezone abbreviation
@@ -499,7 +481,8 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
           let parsedDate = parse(datePart, "dd MMM yyyy")
           format(parsedDate, "MMMM d, yyyy")
       context["Date"] = displayDate
-      context["Author"] = author
+      if frontmatter.hasKey("author"):
+        context["Author"] = frontmatter["author"]
 
     context["Content"] = content
     context["Lang"] = lang
@@ -509,26 +492,7 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
     let renderedHtml = renderTemplate(templateContent, context)
     f.write(renderedHtml)
   else:
-    # Fall back to old hardcoded HTML generation
-    f.write(&"""
-<!DOCTYPE html>
-<html lang="{lang}">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{title}</title>{metaTags}
-  <link media="(prefers-color-scheme: light)" rel="icon" type="image/png" href="/favicon/light.png" sizes="90x90">
-  <link media="(prefers-color-scheme: dark)" rel="icon" type="image/png" href="/favicon/dark.png" sizes="90x90">{reload}
-</head>
-<body>
-<section class="section">
-<div class="container">
-{content}
-</div>
-</section>
-</body>
-</html>
-""")
+    error "Expected template file"
 
   f.close()
   removeFile file
@@ -561,9 +525,12 @@ proc main =
           sitemapUrls.add(url)
       elif kind == pcDir:
         let indexFile = path / "index.md"
-        let isFeed2 = fileExists(indexFile) and "type: feed" in readFile(indexFile)
-        if isFeed2:
-          generateRSSFeed(lang, baseUrl, path, path / "index.xml")
+        var isFeed2 = false
+        if fileExists(indexFile):
+          let (frontmatter, _) = parseFrontmatter(indexFile)
+          if frontmatter.hasKey("type") and frontmatter["type"] == "feed":
+            isFeed2 = true
+            generateRSSFeed(frontmatter, lang, baseUrl, path, path / "index.xml")
         convertDirectory(path, isFeed2)
 
   convertDirectory("public", false)  # Markdown -> HTML
