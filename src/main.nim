@@ -3,6 +3,10 @@ import std/[asynchttpserver, asyncdispatch, uri]
 
 import parsetoml
 
+# Global caches for templates and components
+var templateCache = initTable[string, string]()
+var componentCache = initTable[string, string]()
+
 proc ctrlc() {.noconv.} =
   echo ""
   quit(1)
@@ -12,6 +16,28 @@ setControlCHook(ctrlc)
 proc error(msg: string) =
   stderr.styledWriteLine(fgRed, bgBlack, msg, resetStyle)
   quit(1)
+
+proc loadComponents() =
+  ## Load all components from the components directory into cache
+  componentCache.clear()
+  if not dirExists("components"):
+    return
+
+  for kind, comp in walkDir("components"):
+    let compName = comp.extractFilename().changeFileExt("")
+    if kind == pcFile and not compName.startsWith("."):
+      componentCache[compName] = readFile(comp).strip()
+
+proc loadTemplates() =
+  ## Load all templates from the templates directory into cache
+  templateCache.clear()
+  if not dirExists("templates"):
+    return
+
+  for kind, tmpl in walkDir("templates"):
+    let tmplName = tmpl.extractFilename()
+    if kind == pcFile and not tmplName.startsWith("."):
+      templateCache[tmplName] = readFile(tmpl)
 
 proc parseDate(date: string): DateTime =
   # Parse RFC 2822 dates
@@ -91,11 +117,9 @@ proc processFile(path: string, baseUrl: string): string =
 
   var content = readFile(path)
 
-  for kind, comp in walkDir("components"):
-    let compName = comp.extractFilename().changeFileExt("")
-    if kind == pcFile and not compName.startsWith("."):
-      let compContent = readFile(comp).strip()
-      content = parseTemplate(content, compName, compContent)
+  # Use cached components instead of reading from disk
+  for compName, compContent in componentCache:
+    content = parseTemplate(content, compName, compContent)
 
   var outputPath = path
   var wasRenamed = false
@@ -463,8 +487,10 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
   let f = open(path, fmWrite)
 
   if useTemplate:
-    # Use template rendering
-    let templateContent = readFile(templatePath)
+    # Use cached template instead of reading from disk
+    if not templateCache.hasKey(templateFile):
+      error &"Template file not found in cache: {templateFile}"
+    let templateContent = templateCache[templateFile]
     var context = initTable[string, string]()
     if frontmatter.hasKey("title"):
       context["Title"] = frontmatter["title"]
@@ -502,6 +528,10 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
 proc main =
   removeDir("public")
   copyDir("src", "public")
+
+  # Load templates and components into cache at startup
+  loadTemplates()
+  loadComponents()
 
   let table2 = parsetoml.parseFile("hunim.toml")
 
