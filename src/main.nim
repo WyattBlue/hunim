@@ -409,14 +409,24 @@ proc parseFrontmatter(file: string): (Table[string, string], string)=
 
   return (frontmatter, text[lexer.pos..^1])
 
-proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: string, feedDir: string = ""): string =
-  let (frontmatter, forPandoc) = parseFrontmatter(file)
+type ConvertJob = object
+  pragma: PragmaKind
+  doReload: bool
+  baseUrl: string
+  lang: string
+  file: string
+  path: string
+  feedDir: string
+
+proc processConvertedMarkdown(job: ConvertJob, htmlOutput: string): string =
+  ## Process the HTML output from Pandoc and write the final file
+  let (frontmatter, _) = parseFrontmatter(job.file)
   var templateFile = ""
 
   # Get template from the frontmatter, or use implicit template for feed posts
-  if pragma == blogType and feedDir != "":
+  if job.pragma == blogType and job.feedDir != "":
     # Extract directory name from feedDir (e.g., "public/myblog" -> "myblog")
-    let dirName = feedDir.split('/')[^1]
+    let dirName = job.feedDir.split('/')[^1]
     let implicitTemplate = dirName & "_list.html"
     let implicitTemplatePath = "templates" / implicitTemplate
 
@@ -434,7 +444,7 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
   let useTemplate = fileExists(templatePath)
 
   var reload = ""
-  if doReload:
+  if job.doReload:
     reload = """<script>var bfr = '';
   setInterval(function () {
       fetch(window.location).then((response) => {
@@ -451,16 +461,15 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
       });
   }, 1000);</script>"""
 
-  # Process markdown content
-  var htmlOutput = execCmdEx("pandoc --from markdown --to html5", input = forPandoc).output
+  var htmlContent = htmlOutput
 
   # Fix relative links in index pages to use correct directory path
-  if path.endsWith("/index.html"):
-    let dir = path.replace("public/", "/").replace("/index.html", "/")
-    htmlOutput = htmlOutput.replace("href=\"./", "href=\"" & dir)
+  if job.path.endsWith("/index.html"):
+    let dir = job.path.replace("public/", "/").replace("/index.html", "/")
+    htmlContent = htmlContent.replace("href=\"./", "href=\"" & dir)
 
   # Prepare content for rendering
-  var content = htmlOutput
+  var content = htmlContent
 
   # Prepare meta tags
   var metaTags = ""
@@ -473,18 +482,18 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
 
   var sitemapUrl = ""
   if desc != "no-index":
-    var url = path.replace("public/", "")
+    var url = job.path.replace("public/", "")
     if url.endswith("/index.html"):
       url = url.replace("/index.html", "")
     else:
       url = url.replace(".html", "")
-    metaTags &= &"\n  <link rel=\"canonical\" href=\"{baseUrl}{url}\">"
-    metaTags &= &"\n  <meta property=\"og:url\" content=\"{baseUrl}{url}\">"
-    sitemapUrl = baseUrl & url
+    metaTags &= &"\n  <link rel=\"canonical\" href=\"{job.baseUrl}{url}\">"
+    metaTags &= &"\n  <meta property=\"og:url\" content=\"{job.baseUrl}{url}\">"
+    sitemapUrl = job.baseUrl & url
   else:
     metaTags &= "\n  <meta name=\"robots\" content=\"noindex\">"
 
-  let f = open(path, fmWrite)
+  let f = open(job.path, fmWrite)
 
   if useTemplate:
     # Use cached template instead of reading from disk
@@ -494,7 +503,7 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
     var context = initTable[string, string]()
     if frontmatter.hasKey("title"):
       context["Title"] = frontmatter["title"]
-    if pragma == blogType and frontmatter.hasKey("date"):
+    if job.pragma == blogType and frontmatter.hasKey("date"):
       let date = frontmatter["date"]
       let displayDate =
         try:
@@ -511,7 +520,7 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
         context["Author"] = frontmatter["author"]
 
     context["Content"] = content
-    context["Lang"] = lang
+    context["Lang"] = job.lang
     context["MetaTags"] = metaTags
     context["Reload"] = reload
 
@@ -521,7 +530,7 @@ proc convert(pragma: PragmaKind, doReload: bool, baseUrl, lang, file, path: stri
     error "Expected template file"
 
   f.close()
-  removeFile file
+  removeFile(job.file)
 
   return sitemapUrl
 
@@ -545,14 +554,21 @@ proc main =
 
   var sitemapUrls: seq[string] = @[]
 
-  proc convertDirectory(dir: string, isFeed: bool) =
+  proc collectJobs(dir: string, isFeed: bool, jobs: var seq[ConvertJob]) =
+    ## Recursively collect all markdown conversion jobs
     for kind, path in walkDir(dir):
       if kind == pcFile and path.endsWith(".md"):
-        let kind = (if isFeed and not path.endsWith("index.md"): blogType else: normalType)
+        let pragmaKind = (if isFeed and not path.endsWith("index.md"): blogType else: normalType)
         let feedDir = (if isFeed and not path.endsWith("index.md"): dir else: "")
-        let url = convert(kind, doReload, baseUrl, lang, path, path.changeFileExt("html"), feedDir)
-        if url != "":
-          sitemapUrls.add(url)
+        jobs.add(ConvertJob(
+          pragma: pragmaKind,
+          doReload: doReload,
+          baseUrl: baseUrl,
+          lang: lang,
+          file: path,
+          path: path.changeFileExt("html"),
+          feedDir: feedDir
+        ))
       elif kind == pcDir:
         let indexFile = path / "index.md"
         var isFeed2 = false
@@ -561,9 +577,71 @@ proc main =
           if frontmatter.hasKey("type") and frontmatter["type"] == "feed":
             isFeed2 = true
             generateRSSFeed(frontmatter, lang, baseUrl, path, path / "index.xml")
-        convertDirectory(path, isFeed2)
+        collectJobs(path, isFeed2, jobs)
 
-  convertDirectory("public", false)  # Markdown -> HTML
+  # Collect all conversion jobs
+  var jobs: seq[ConvertJob] = @[]
+  collectJobs("public", false, jobs)
+
+  # Convert all markdown files with truly parallel Pandoc execution
+  echo &"Converting {jobs.len} markdown files in parallel..."
+
+  # Start all Pandoc processes at once using temp files
+  type PandocTask = object
+    process: Process
+    job: ConvertJob
+    inputFile: string
+    outputFile: string
+
+  var tasks: seq[PandocTask] = @[]
+  let tmpDir = getTempDir() / "hunim_" & $getCurrentProcessId()
+  createDir(tmpDir)
+
+  # Parse frontmatter, write temp files, and start all processes
+  for i, job in jobs:
+    let (_, forPandoc) = parseFrontmatter(job.file)
+
+    # Write markdown to temp file
+    let inputFile = tmpDir / &"input_{i}.md"
+    let outputFile = tmpDir / &"output_{i}.html"
+    writeFile(inputFile, forPandoc)
+
+    # Start Pandoc process (non-blocking)
+    let p = startProcess(
+      "pandoc",
+      args = ["--from", "markdown", "--to", "html5", "-o", outputFile, inputFile],
+      options = {poUsePath}
+    )
+
+    tasks.add(PandocTask(
+      process: p,
+      job: job,
+      inputFile: inputFile,
+      outputFile: outputFile
+    ))
+
+  # Wait for all processes to complete and collect results
+  for task in tasks:
+    let exitCode = task.process.waitForExit()
+    task.process.close()
+
+    if exitCode != 0:
+      error &"Pandoc failed for file {task.job.file}"
+
+    # Read the output
+    let htmlOutput = readFile(task.outputFile)
+
+    # Clean up temp files
+    removeFile(task.inputFile)
+    removeFile(task.outputFile)
+
+    # Now do the rest of the conversion synchronously
+    let url = processConvertedMarkdown(task.job, htmlOutput)
+    if url != "":
+      sitemapUrls.add(url)
+
+  # Clean up temp directory
+  removeDir(tmpDir)
   processDirectory("public", baseUrl, sitemapUrls)  # Handle components
   writeSitemap(sitemapUrls, "public/sitemap.xml")  # Generate sitemap
   echo "done building"
