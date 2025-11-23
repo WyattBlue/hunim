@@ -7,6 +7,7 @@ import parsetoml
 # Global caches for templates and components
 var templateCache = initTable[string, string]()
 var componentCache = initTable[string, string]()
+var buildDrafts = false
 
 proc ctrlc() {.noconv.} =
   echo ""
@@ -245,72 +246,6 @@ proc extractMetadata(baseUrl, file: string): BlogPost =
     dateObj: parseDate(date),
   )
 
-proc generateRSSFeed(frontmatter: Table[string, string], lang, baseUrl,
-    inputPath, outputPath: string) =
-  var posts: seq[BlogPost] = @[]
-
-  # Collect all blog posts
-  for file in walkFiles(inputPath / "*.md"):
-    if file.endsWith("index.md"):
-      continue # Skip index
-
-    let post = extractMetadata(baseUrl, file)
-    posts.add(post)
-
-  # Sort posts by date (newest first)
-  posts.sort(proc (x, y: BlogPost): int =
-    # Compare dates in reverse order for newest first
-    result = cmp(y.dateObj, x.dateObj)
-  )
-
-  let title = frontmatter.getOrDefault("title", "RSS Feed")
-  let desc = frontmatter.getOrDefault("desc", "My RSS Feed")
-
-  # Generate RSS XML
-  var rssContent = &"""<?xml version="1.0" encoding="UTF-8"?>
-<rss xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
-  <channel>
-    <title>{title}</title>
-    <link>{baseUrl}</link>
-    <description>{desc}</description>
-    <language>{lang}</language>
-"""
-
-  # Add items
-  for post in posts:
-    rssContent &= &"""    <item>
-      <title>{post.title}</title>
-      <link>{post.link}</link>
-      <pubDate>{post.pubDate}</pubDate>
-      <description>{post.link}</description>
-    </item>
-"""
-
-  # Close tags
-  rssContent &= "  </channel>\n</rss>"
-
-  # Write to file
-  writeFile(outputPath, rssContent)
-  echo "Generated RSS feed at: ", outputPath
-
-proc writeSitemap(urls: seq[string], outputPath: string) =
-  # Generate sitemap XML
-  var sitemapContent = """<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-"""
-
-  for url in urls:
-    sitemapContent &= &"""  <url>
-    <loc>{url}</loc>
-  </url>
-"""
-
-  sitemapContent &= "</urlset>"
-
-  # Write to file
-  writeFile(outputPath, sitemapContent)
-  echo "Generated sitemap at: ", outputPath
-
 func initLexer(name, text: string): Lexer =
   Lexer(name: name, text: text, currentChar: text[0], state: startState,
       line: 1, col: 1)
@@ -386,7 +321,6 @@ proc getNextToken(self: Lexer): Token =
 
   return initToken(tkEOF, "")
 
-
 proc parseFrontmatter(file: string): Table[string, string] =
   let text = readFile(file)
   var lexer = initLexer(file, text)
@@ -424,6 +358,78 @@ proc nonFrontmatter(file: string): string =
       lexer.error("frontmatter: Expected --- at the end")
 
   return text[lexer.pos..^1]
+
+proc generateRSSFeed(frontmatter: Table[string, string], lang, baseUrl,
+    inputPath, outputPath: string) =
+  var posts: seq[BlogPost] = @[]
+
+  # Collect all blog posts
+  for file in walkFiles(inputPath / "*.md"):
+    if file.endsWith("index.md"):
+      continue
+
+    if not buildDrafts:
+      let fileFrontmatter = parseFrontmatter(file)
+      if fileFrontmatter.getOrDefault("draft", "false") == "true":
+        continue
+
+    let post = extractMetadata(baseUrl, file)
+    posts.add(post)
+
+  # Sort posts by date (newest first)
+  posts.sort(proc (x, y: BlogPost): int =
+    # Compare dates in reverse order for newest first
+    result = cmp(y.dateObj, x.dateObj)
+  )
+
+  let title = frontmatter.getOrDefault("title", "RSS Feed")
+  let desc = frontmatter.getOrDefault("desc", "My RSS Feed")
+
+  # Generate RSS XML
+  var rssContent = &"""<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+  <channel>
+    <title>{title}</title>
+    <link>{baseUrl}</link>
+    <description>{desc}</description>
+    <language>{lang}</language>
+"""
+
+  # Add items
+  for post in posts:
+    rssContent &= &"""    <item>
+      <title>{post.title}</title>
+      <link>{post.link}</link>
+      <pubDate>{post.pubDate}</pubDate>
+      <description>{post.link}</description>
+    </item>
+"""
+
+  # Close tags
+  rssContent &= "  </channel>\n</rss>"
+
+  # Write to file
+  writeFile(outputPath, rssContent)
+  echo "Generated RSS feed at: ", outputPath
+
+proc writeSitemap(urls: seq[string], outputPath: string) =
+  # Generate sitemap XML
+  var sitemapContent = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+"""
+
+  for url in urls:
+    sitemapContent &= &"""  <url>
+    <loc>{url}</loc>
+  </url>
+"""
+
+  sitemapContent &= "</urlset>"
+
+  # Write to file
+  writeFile(outputPath, sitemapContent)
+  echo "Generated sitemap at: ", outputPath
+
 
 type ConvertJob = object
   doReload: bool
@@ -578,6 +584,12 @@ proc main =
     ## Recursively collect all markdown conversion jobs
     for kind, path in walkDir(dir):
       if kind == pcFile and path.endsWith(".md"):
+        # Check if the file is a draft and should be skipped
+        if not buildDrafts:
+          let frontmatter = parseFrontmatter(path)
+          if frontmatter.getOrDefault("draft", "false") == "true":
+            continue
+
         let feedDir = (if isFeed and not path.endsWith(
             "index.md"): dir else: "")
         jobs.add(ConvertJob(
@@ -698,6 +710,7 @@ proc newSite(siteName: string) =
   )
 
   createDir("components")
+  createDir("templates")
   createDir("src")
   setCurrentDir("src")
   writeFile(
@@ -742,12 +755,6 @@ proc getMimeType(filename: string): string =
     return "image/webp"
   of ".avif":
     return "image/avif"
-  of ".ico":
-    return "image/x-icon"
-  of ".woff":
-    return "font/woff"
-  of ".woff2":
-    return "font/woff2"
   of ".ttf":
     return "font/ttf"
   of ".pdf":
@@ -802,10 +809,7 @@ proc rebuild =
     stderr.styledWriteLine(fgRed, "Build failed: " & getCurrentExceptionMsg())
     stderr.resetAttributes()
 
-proc server =
-  # Check if we should watch for changes
-  let watchMode = paramCount() > 1 and paramStr(2) == "--watch"
-
+proc server(watchMode: bool) =
   let port = 8080
   let address = "127.0.0.1"
 
@@ -858,18 +862,33 @@ proc server =
   waitFor httpServer.serve(Port(port), handleRequest, address)
 
 when isMainModule:
-  if paramCount() < 1:
+  var cmd = ""
+  var cmd2 = ""
+  var watchMode = false
+  # Parse --buildDrafts or -D option from any parameter position
+  for i in 1..paramCount():
+    if paramStr(i) == "--buildDrafts" or paramStr(i) == "-D":
+      buildDrafts = true
+      break
+    elif paramStr(i) == "--watch":
+      watchMode = true
+    elif not paramStr(i).startsWith("-") and cmd == "":
+      cmd = paramStr(i)
+    elif cmd2 == "":
+      cmd2 = paramStr(i)
+
+  if cmd == "":
     main()
-  elif paramStr(1) == "version":
+  elif cmd == "version":
     echo "0.1.0"
-  elif paramStr(1) == "health":
+  elif cmd == "health":
     health()
-  elif paramStr(1) == "newsite":
-    if paramCount() < 2:
+  elif cmd == "newsite":
+    if cmd2 == "":
       error "You must provide a site name"
-    newSite(paramStr(2))
-  elif paramStr(1) == "server":
+    newSite(cmd2)
+  elif cmd == "server":
     rebuild()
-    server()
+    server(watchMode)
   else:
-    error &"Unknown command: {paramStr(1)}"
+    error &"Unknown command: {cmd}"
