@@ -10,10 +10,13 @@ bin           = @["main=hunim"]
 # Dependencies
 requires "nim >= 2.2.0"
 requires "parsetoml"
-requires "nmark"
+
+before install:
+  mkDir("lib")
+  exec "git clone https://github.com/mity/md4c lib/md4c"
 
 task make, "Export the project":
-  exec "nim c -d:danger --opt:size --out:hunim src/main.nim"
+  exec "nim c -d:danger --opt:size --passC:-Ilib/md4c/src --out:hunim src/main.nim"
   when defined(macosx):
     exec "strip -ur hunim"
     exec "stat -f \"%z bytes\" ./hunim"

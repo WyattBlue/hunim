@@ -5,7 +5,7 @@ import std/[algorithm, sequtils, strformat, strutils, terminal, times, os,
 import std/[asynchttpserver, asyncdispatch, uri]
 
 import parsetoml
-import nmark
+import md4c_wrapper
 
 # Global caches for templates and components
 var templateCache = initTable[string, string]()
