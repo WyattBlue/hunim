@@ -3,6 +3,17 @@ import std/[algorithm, sequtils, strformat, strutils, terminal, times, os,
 import std/[asynchttpserver, asyncdispatch, uri]
 
 import parsetoml
+import markdown
+
+
+method `$`*(token: Heading): string =
+  let num = $token.level
+  let child = token.render("")
+  if num == "1" or num == "2":
+    let id = child.toLower.replace(" ", "-")
+    fmt"""<h{num} id="{id}">{child}</h{num}>"""
+  else:
+    fmt"<h{num}>{child}</h{num}>"
 
 # Global caches for templates and components
 var templateCache = initTable[string, string]()
@@ -627,20 +638,30 @@ proc main =
   let tmpDir = getTempDir() / "hunim_" & $getCurrentProcessId()
   createDir(tmpDir)
 
-  # Parse frontmatter, write temp files, and start all processes
   for i, job in jobs:
+    let frontmatter = parseFrontmatter(job.file)
+    let renderer = frontmatter.getOrDefault("renderer", "")
+
     # Write markdown to temp file
     let inputFile = tmpDir / &"input_{i}.md"
     let outputFile = tmpDir / &"output_{i}.html"
-    writeFile(inputFile, nonFrontmatter(job.file))
+    let mdContent = nonFrontmatter(job.file)
+    writeFile(inputFile, mdContent)
 
-    # Start Pandoc process (non-blocking)
-    let p = startProcess(
-      "pandoc",
-      args = ["--from", "markdown", "--to", "html5", "-o", outputFile,
-          inputFile],
-      options = {poUsePath}
-    )
+    var p: Process
+    if renderer == "pandoc":
+      # Start Pandoc process (non-blocking)
+      p = startProcess(
+        "pandoc",
+        args = ["--from", "markdown", "--to", "html5", "-o", outputFile,
+            inputFile],
+        options = {poUsePath}
+      )
+    else:
+      let htmlOutput = markdown(mdContent)
+      writeFile(outputFile, htmlOutput)
+      # Create a dummy process that has already exited
+      p = nil
 
     tasks.add(PandocTask(
       process: p,
@@ -651,11 +672,12 @@ proc main =
 
   # Wait for all processes to complete and collect results
   for task in tasks:
-    let exitCode = task.process.waitForExit()
-    task.process.close()
+    if task.process != nil:
+      let exitCode = task.process.waitForExit()
+      task.process.close()
 
-    if exitCode != 0:
-      error &"Pandoc failed for file {task.job.file}"
+      if exitCode != 0:
+        error &"Pandoc failed for file {task.job.file}"
 
     # Read the output
     let htmlOutput = readFile(task.outputFile)
