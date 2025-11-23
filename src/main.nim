@@ -1,19 +1,11 @@
+{.experimental: "parallel".}
+
 import std/[algorithm, sequtils, strformat, strutils, terminal, times, os,
-    osproc, tables]
+    tables, threadpool]
 import std/[asynchttpserver, asyncdispatch, uri]
 
 import parsetoml
-import markdown
-
-
-method `$`*(token: Heading): string =
-  let num = $token.level
-  let child = token.render("")
-  if num == "1" or num == "2":
-    let id = child.toLower.replace(" ", "-")
-    fmt"""<h{num} id="{id}">{child}</h{num}>"""
-  else:
-    fmt"<h{num}>{child}</h{num}>"
+import nmark
 
 # Global caches for templates and components
 var templateCache = initTable[string, string]()
@@ -450,6 +442,16 @@ type ConvertJob = object
   path: string
   feedDir: string
 
+type ConvertResult = object
+  job: ConvertJob
+  htmlOutput: string
+
+proc convertMarkdownWorker(job: ConvertJob): ConvertResult =
+  ## Worker function that converts markdown to HTML
+  let mdContent = nonFrontmatter(job.file)
+  let htmlOutput = markdown(mdContent)
+  return ConvertResult(job: job, htmlOutput: htmlOutput)
+
 proc processConvertedMarkdown(job: ConvertJob, htmlOutput: string): string =
   let frontmatter = parseFrontmatter(job.file)
   var templateFile = ""
@@ -624,103 +626,30 @@ proc main =
   var jobs: seq[ConvertJob] = @[]
   collectJobs("public", false, jobs)
 
-  # Convert all markdown files with parallel Pandoc execution
-  echo &"Converting {jobs.len} markdown files in parallel..."
+  if jobs.len == 0:
+    echo "No markdown files to convert"
+  else:
+    echo &"Converting {jobs.len} markdown files in parallel..."
 
-  # Start all Pandoc processes at once using temp files
-  type PandocTask = object
-    process: Process
-    job: ConvertJob
-    inputFile: string
-    outputFile: string
+    # Process all jobs in parallel
+    var flowVars = newSeq[FlowVar[ConvertResult]](jobs.len)
 
-  var tasks: seq[PandocTask] = @[]
-  let tmpDir = getTempDir() / "hunim_" & $getCurrentProcessId()
-  createDir(tmpDir)
+    # Spawn all conversion tasks
+    for i in 0 ..< jobs.len:
+      flowVars[i] = spawn convertMarkdownWorker(jobs[i])
 
-  for i, job in jobs:
-    let frontmatter = parseFrontmatter(job.file)
-    let renderer = frontmatter.getOrDefault("renderer", "")
+    # Wait for all tasks to complete and collect results
+    for flowVar in flowVars:
+      let result = ^flowVar
+      let url = processConvertedMarkdown(result.job, result.htmlOutput)
+      if url != "":
+        sitemapUrls.add(url)
 
-    # Write markdown to temp file
-    let inputFile = tmpDir / &"input_{i}.md"
-    let outputFile = tmpDir / &"output_{i}.html"
-    let mdContent = nonFrontmatter(job.file)
-    writeFile(inputFile, mdContent)
 
-    var p: Process
-    if renderer == "pandoc":
-      # Start Pandoc process (non-blocking)
-      p = startProcess(
-        "pandoc",
-        args = ["--from", "markdown", "--to", "html5", "-o", outputFile,
-            inputFile],
-        options = {poUsePath}
-      )
-    else:
-      let htmlOutput = markdown(mdContent)
-      writeFile(outputFile, htmlOutput)
-      # Create a dummy process that has already exited
-      p = nil
-
-    tasks.add(PandocTask(
-      process: p,
-      job: job,
-      inputFile: inputFile,
-      outputFile: outputFile
-    ))
-
-  # Wait for all processes to complete and collect results
-  for task in tasks:
-    if task.process != nil:
-      let exitCode = task.process.waitForExit()
-      task.process.close()
-
-      if exitCode != 0:
-        error &"Pandoc failed for file {task.job.file}"
-
-    # Read the output
-    let htmlOutput = readFile(task.outputFile)
-
-    # Clean up temp files
-    removeFile(task.inputFile)
-    removeFile(task.outputFile)
-
-    # Now do the rest of the conversion synchronously
-    let url = processConvertedMarkdown(task.job, htmlOutput)
-    if url != "":
-      sitemapUrls.add(url)
-
-  # Clean up temp directory
-  removeDir(tmpDir)
   processDirectory("public", baseUrl, sitemapUrls) # Handle components
   writeSitemap(sitemapUrls, "public/sitemap.xml") # Generate sitemap
   echo "done building"
 
-proc health =
-  let pandocFound = findExe("pandoc") != ""
-  let rsyncFound = findExe("rsync") != ""
-  let tomlFound = fileExists("hunim.toml")
-
-  stdout.styledWriteLine("Can convert html/components to html ", fgGreen, "(yes)")
-  stdout.resetAttributes()
-  if pandocFound:
-    stdout.styledWriteLine("Can convert markdown to html ", fgGreen, "(pandoc found)")
-  else:
-    stdout.styledWriteLine("Can convert markdown to html ", fgRed, "(pandoc not found)")
-  stdout.resetAttributes()
-
-  if rsyncFound:
-    stdout.styledWriteLine("Can upload to server ", fgGreen, "(rsync found)")
-  else:
-    stdout.styledWriteLine("Can upload to server ", fgRed, "(rsync not found)")
-  stdout.resetAttributes()
-
-  if tomlFound:
-    stdout.styledWriteLine("hunim.toml found ", fgGreen, "(true)")
-  else:
-    stdout.styledWriteLine("hunim.toml found ", fgRed, "(false)")
-  stdout.resetAttributes()
 
 proc newSite(siteName: string) =
   createDir(siteName)
@@ -903,8 +832,6 @@ when isMainModule:
     main()
   elif cmd == "version":
     echo "0.1.0"
-  elif cmd == "health":
-    health()
   elif cmd == "newsite":
     if cmd2 == "":
       error "You must provide a site name"

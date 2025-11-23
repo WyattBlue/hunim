@@ -10,7 +10,7 @@ bin           = @["main=hunim"]
 # Dependencies
 requires "nim >= 2.2.0"
 requires "parsetoml"
-requires "markdown"
+requires "nmark"
 
 task make, "Export the project":
   exec "nim c -d:danger --opt:size --out:hunim src/main.nim"
