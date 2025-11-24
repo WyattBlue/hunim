@@ -1,0 +1,49 @@
+name: build
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  main:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+            binary_name: linux-x86_64
+          - os: macos-15-intel
+            binary_name: macos-x86_64
+          - os: macos-latest
+            binary_name: macos-arm64
+          - os: windows-latest
+            binary_name: windows-x86_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Nim
+        if: runner.os != 'macOS'
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: "stable"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install packages for macOS
+        if: runner.os == 'macOS'
+        run: brew install nim
+      - name: Compile
+        run: nimble make
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        run: mv hunim.exe hunim-${{ matrix.binary_name }}.exe
+      - name: Rename binary (Unix)
+        if: runner.os != 'Windows'
+        run: mv hunim hunim-${{ matrix.binary_name }}
+      - name: Upload to Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ matrix.binary_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

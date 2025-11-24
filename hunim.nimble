@@ -12,10 +12,17 @@ requires "nim >= 2.2.0"
 requires "parsetoml"
 
 before install:
-  mkDir("lib")
-  exec "git clone https://github.com/mity/md4c lib/md4c"
+  if not dirExists("lib"):
+    mkDir("lib")
+  if not dirExists("lib/md4c"):
+    exec "git clone https://github.com/mity/md4c lib/md4c"
 
 task make, "Export the project":
+  if not dirExists("lib"):
+    mkDir("lib")
+  if not dirExists("lib/md4c"):
+    exec "git clone https://github.com/mity/md4c lib/md4c"
+
   exec "nim c -d:danger --opt:size --passC:-Ilib/md4c/src --out:hunim src/main.nim"
   when defined(macosx):
     exec "strip -ur hunim"

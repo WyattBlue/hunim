@@ -1,13 +1,6 @@
-## Nim wrapper for md4c - Fast Markdown parser
-
 {.compile: "../lib/md4c/src/md4c.c".}
 {.compile: "../lib/md4c/src/md4c-html.c".}
 {.compile: "../lib/md4c/src/entity.c".}
-
-type
-  MD_SIZE = uint32
-  StringBuilder = ref object
-    data: string
 
 const
   MD_FLAG_PERMISSIVEATXHEADERS = 0x0002'u32
