@@ -12,6 +12,26 @@ var templateCache = initTable[string, string]()
 var componentCache = initTable[string, string]()
 var buildDrafts = false
 
+let reload = """<script>var bfr = '';
+  setInterval(function () {
+      fetch(window.location).then((response) => {
+          return response.text();
+      }).then(r => {
+          if (bfr != '' && bfr != r) {
+              setTimeout(function() {
+                  window.location.reload();
+              }, 100);
+          }
+          else {
+              bfr = r;
+          }
+      });
+  }, 100);
+</script>
+</head>
+"""
+
+
 proc ctrlc() {.noconv.} =
   echo ""
   quit(1)
@@ -69,7 +89,6 @@ proc parseDate(date: string): DateTime =
 
   return result
 
-
 func shouldProcessFile(path: string): bool =
   if path.endsWith(".DS_Store"):
     return false
@@ -113,7 +132,7 @@ proc renderTemplate(templateContent: string, context: Table[string,
     result = result.replace("{{ ." & key & " }}", value)
   return result
 
-proc processFile(path: string, baseUrl: string): string =
+proc processFile(path: string, baseUrl: string, doReload: bool, lang: string): string =
   # Skip non-HTML files
   let ext = path.splitFile().ext.toLowerAscii()
   if ext != ".html":
@@ -127,6 +146,14 @@ proc processFile(path: string, baseUrl: string): string =
   # Use cached components instead of reading from disk
   for compName, compContent in componentCache:
     content = parseTemplate(content, compName, compContent)
+
+  # Render template variables like {{ .Lang }}
+  var context = initTable[string, string]()
+  context["Lang"] = lang
+  content = renderTemplate(content, context)
+
+  if doReload:
+    content = content.replace("</head>", reload)
 
   var outputPath = path
   var wasRenamed = false
@@ -165,14 +192,14 @@ proc processFile(path: string, baseUrl: string): string =
 
   return baseUrl & url
 
-proc processDirectory(dir: string, baseUrl: string, urls: var seq[string]) =
+proc processDirectory(dir: string, baseUrl: string, urls: var seq[string], doReload: bool, lang: string) =
   for kind, path in walkDir(dir):
     if kind == pcFile:
-      let url = processFile(path, baseUrl)
+      let url = processFile(path, baseUrl, doReload, lang)
       if url != "":
         urls.add(url)
     elif kind == pcDir:
-      processDirectory(path, baseUrl, urls)
+      processDirectory(path, baseUrl, urls, doReload, lang)
 
 type
 
@@ -472,28 +499,8 @@ proc processConvertedMarkdown(job: ConvertJob, htmlOutput: string): string =
 
   let desc = frontmatter.getOrDefault("desc", "")
 
-  # Check if template file exists
   let templatePath = "templates" / templateFile
   let useTemplate = fileExists(templatePath)
-
-  var reload = ""
-  if job.doReload:
-    reload = """<script>var bfr = '';
-  setInterval(function () {
-      fetch(window.location).then((response) => {
-          return response.text();
-      }).then(r => {
-          if (bfr != '' && bfr != r) {
-              setTimeout(function() {
-                  window.location.reload();
-              }, 1000);
-          }
-          else {
-              bfr = r;
-          }
-      });
-  }, 1000);</script>"""
-
   var htmlContent = htmlOutput
 
   # Fix relative links in index pages to use correct directory path
@@ -555,7 +562,6 @@ proc processConvertedMarkdown(job: ConvertJob, htmlOutput: string): string =
     context["Content"] = content
     context["Lang"] = job.lang
     context["MetaTags"] = metaTags
-    context["Reload"] = reload
 
     let renderedHtml = renderTemplate(templateContent, context)
     f.write(renderedHtml)
@@ -567,7 +573,7 @@ proc processConvertedMarkdown(job: ConvertJob, htmlOutput: string): string =
 
   return sitemapUrl
 
-proc main =
+proc main(doReload: bool) =
   try:
     removeDir("public")
   except Exception:
@@ -588,8 +594,6 @@ proc main =
     error "baseURL must end with /"
 
   let lang = $table2["languageCode"]
-
-  let doReload = paramCount() > 0 and paramStr(1) == "--dev"
 
   var sitemapUrls: seq[string] = @[]
 
@@ -646,7 +650,7 @@ proc main =
         sitemapUrls.add(url)
 
 
-  processDirectory("public", baseUrl, sitemapUrls) # Handle components
+  processDirectory("public", baseUrl, sitemapUrls, doReload, lang) # Handle components
   writeSitemap(sitemapUrls, "public/sitemap.xml") # Generate sitemap
   echo "done building"
 
@@ -668,7 +672,7 @@ proc newSite(siteName: string) =
     "index.html",
     &"""
 <!DOCTYPE html>
-<html lang="en-us">
+<html lang="{{ .Lang }}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -714,8 +718,12 @@ proc getMimeType(filename: string): string =
     if fileExists(filename):
       try:
         let content = readFile(filename)
-        if content.startsWith("<!DOCTYPE html") or content.startsWith("<html"):
-          return "text/html; charset=utf-8"
+        if content.len > 0:
+          # Only convert the prefix needed for comparison (15 chars is enough for "<!DOCTYPE html")
+          let prefixLen = min(15, content.len)
+          let contentPrefix = content[0..<prefixLen].toLowerAscii()
+          if contentPrefix.startsWith("<!doctype html") or contentPrefix.startsWith("<html"):
+            return "text/html; charset=utf-8"
       except:
         discard
     return "application/octet-stream"
@@ -751,16 +759,16 @@ proc getLastModTime(dir: string): Time =
 
   return lastMod
 
-proc rebuild =
+proc rebuild(doReload: bool) =
   stdout.styledWriteLine(fgCyan, "Rebuilding site...")
   stdout.resetAttributes()
   try:
-    main()
+    main(doReload)
   except:
     stderr.styledWriteLine(fgRed, "Build failed: " & getCurrentExceptionMsg())
     stderr.resetAttributes()
 
-proc server(watchMode: bool) =
+proc server() =
   let port = 8080
   let address = "127.0.0.1"
 
@@ -791,45 +799,38 @@ proc server(watchMode: bool) =
       let (code, content, mimeType) = serveFile(filePath)
       await req.respond(code, content, newHttpHeaders([("Content-Type", mimeType)]))
 
-    echo &"{req.reqMethod} {req.url.path} -> {filePath}"
+    # echo &"{req.reqMethod} {req.url.path} -> {filePath}"
 
   proc checkForChanges {.async.} =
     while true:
-      await sleepAsync(1000) # Check every second
+      await sleepAsync(100) # 0.1sec
       let currentModTime = getLastModTime("src")
       if currentModTime > lastModTime:
         lastModTime = currentModTime
-        rebuild()
+        rebuild(true)
 
   stdout.styledWriteLine(fgGreen, &"Server running at http://{address}:{port}/")
-  if watchMode:
-    stdout.styledWriteLine(fgCyan, "Watching for file changes...")
   stdout.styledWriteLine(fgYellow, "Press Ctrl+C to stop")
   stdout.resetAttributes()
 
-  if watchMode:
-    asyncCheck checkForChanges()
+  asyncCheck checkForChanges()
 
   waitFor httpServer.serve(Port(port), handleRequest, address)
 
 when isMainModule:
   var cmd = ""
   var cmd2 = ""
-  var watchMode = false
-  # Parse --buildDrafts or -D option from any parameter position
+
   for i in 1..paramCount():
     if paramStr(i) == "--buildDrafts" or paramStr(i) == "-D":
       buildDrafts = true
-      break
-    elif paramStr(i) == "--watch":
-      watchMode = true
     elif not paramStr(i).startsWith("-") and cmd == "":
       cmd = paramStr(i)
     elif cmd2 == "":
       cmd2 = paramStr(i)
 
   if cmd == "":
-    main()
+    main(doReload=false)
   elif cmd == "version":
     echo "0.1.0"
   elif cmd == "newsite":
@@ -837,7 +838,7 @@ when isMainModule:
       error "You must provide a site name"
     newSite(cmd2)
   elif cmd == "server":
-    rebuild()
-    server(watchMode)
+    rebuild(doReload=true)
+    server()
   else:
     error &"Unknown command: {cmd}"
