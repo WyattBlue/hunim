@@ -37,3 +37,11 @@ hunim
 ```
 
 This publishing the files to the `public` directory.
+
+## Features
+
+Run NimScript with:
+```
+{{ exec my_script.nims }}
+```
+This will replace the contents with the output of the script in `components/my_script.nims`.

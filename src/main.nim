@@ -1,7 +1,7 @@
 {.experimental: "parallel".}
 
 import std/[algorithm, sequtils, strformat, strutils, terminal, times, os,
-    tables, threadpool]
+    osproc, tables, threadpool]
 import std/[asynchttpserver, asyncdispatch, uri]
 
 import parsetoml
@@ -132,6 +132,43 @@ proc renderTemplate(templateContent: string, context: Table[string,
     result = result.replace("{{ ." & key & " }}", value)
   return result
 
+proc processExecTags(content: string): string =
+  ## Replace {{ exec script.nims }} tags with the stdout of the NimScript
+  var newContent = content
+  var startIdx = 0
+  while true:
+    let openIdx = newContent.find("{{ exec ", startIdx)
+    if openIdx == -1:
+      break
+    let closeIdx = newContent.find(" }}", openIdx)
+    if closeIdx == -1:
+      stderr.writeLine("error! Unclosed exec tag")
+      quit(1)
+
+    let scriptName = newContent[openIdx + 8 .. closeIdx - 1].strip()
+
+    if not scriptName.endsWith(".nims"):
+      error &"exec script must end with .nims: {scriptName}"
+    for c in scriptName[0..^6]:
+      if c notin {'a'..'z', 'A'..'Z', '0'..'9', '_', '-'}:
+        error &"exec script name contains invalid characters: {scriptName}"
+
+    let scriptPath = "components" / scriptName
+
+    if not fileExists(scriptPath):
+      error &"NimScript not found: {scriptPath}"
+
+    let (output, exitCode) = execCmdEx("nim e --hints:off " & scriptPath)
+    if exitCode != 0:
+      error &"NimScript failed ({scriptName}):\n{output}"
+
+    let fullMatch = newContent[openIdx .. closeIdx + 2]
+    let trimmed = output.strip()
+    newContent = newContent.replace(fullMatch, trimmed)
+    startIdx = openIdx + trimmed.len
+
+  return newContent
+
 proc processFile(path: string, baseUrl: string, doReload: bool, lang: string): string =
   # Skip non-HTML files
   let ext = path.splitFile().ext.toLowerAscii()
@@ -151,6 +188,7 @@ proc processFile(path: string, baseUrl: string, doReload: bool, lang: string): s
   var context = initTable[string, string]()
   context["Lang"] = lang
   content = renderTemplate(content, context)
+  content = processExecTags(content)
 
   if doReload:
     content = content.replace("</head>", reload)
@@ -475,7 +513,7 @@ type ConvertResult = object
 
 proc convertMarkdownWorker(job: ConvertJob): ConvertResult =
   ## Worker function that converts markdown to HTML
-  let mdContent = nonFrontmatter(job.file)
+  let mdContent = processExecTags(nonFrontmatter(job.file))
   let htmlOutput = markdown(mdContent)
   return ConvertResult(job: job, htmlOutput: htmlOutput)
 
@@ -563,7 +601,7 @@ proc processConvertedMarkdown(job: ConvertJob, htmlOutput: string): string =
     context["Lang"] = job.lang
     context["MetaTags"] = metaTags
 
-    let renderedHtml = renderTemplate(templateContent, context)
+    let renderedHtml = processExecTags(renderTemplate(templateContent, context))
     f.write(renderedHtml)
   else:
     error "Expected template file"
@@ -832,7 +870,7 @@ when isMainModule:
   if cmd == "":
     main(doReload=false)
   elif cmd == "version":
-    echo "0.1.0"
+    echo "0.1.1"
   elif cmd == "newsite":
     if cmd2 == "":
       error "You must provide a site name"
