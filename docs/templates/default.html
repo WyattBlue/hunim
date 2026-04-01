@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="{{ .Lang }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ .Title }} — Hunim</title>
+  {{ .MetaTags }}
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  {{ nav }}
+  <main class="main">
+    {{ .Content }}
+  </main>
+</body>
+</html>

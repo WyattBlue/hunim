@@ -1,0 +1,325 @@
+:root {
+  --bg: #fff;
+  --text: #111;
+  --muted: #555;
+  --sidebar-bg: #fafafa;
+  --border: #e5e5e5;
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --code-bg: #f5f5f5;
+  --pre-bg: #1e1e2e;
+  --pre-text: #cdd6f4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d0d0d;
+    --text: #e0e0e0;
+    --muted: #999;
+    --sidebar-bg: #141414;
+    --border: #2a2a2a;
+    --accent: #818cf8;
+    --accent-hover: #a5b4fc;
+    --code-bg: #1e1e1e;
+    --pre-bg: #161616;
+    --pre-text: #cdd6f4;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 16px; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.65;
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── Sidebar ── */
+
+.sidebar {
+  width: 248px;
+  min-height: 100vh;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+  padding: 0 0 40px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.sidebar-logo {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 22px 20px 18px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.sidebar-logo a {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent);
+  text-decoration: none;
+  letter-spacing: -0.3px;
+}
+
+.sidebar-logo .ver {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.sidebar nav { padding: 0 10px; }
+
+.nav-section {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  padding: 14px 10px 4px;
+}
+
+.sidebar nav ul { list-style: none; }
+
+.sidebar nav ul li a {
+  display: block;
+  padding: 5px 10px;
+  border-radius: 6px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.sidebar nav ul li a:hover {
+  background: var(--border);
+  color: var(--accent);
+}
+
+/* ── Main content ── */
+
+.main {
+  margin-left: 248px;
+  padding: 52px 72px 80px;
+  max-width: 860px;
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* ── Typography ── */
+
+h1 {
+  font-size: 2.1em;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 12px;
+  line-height: 1.2;
+}
+
+h2 {
+  font-size: 1.35em;
+  font-weight: 600;
+  margin: 40px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  letter-spacing: -0.2px;
+}
+
+h3 {
+  font-size: 1.05em;
+  font-weight: 600;
+  margin: 28px 0 8px;
+}
+
+p { margin-bottom: 16px; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; color: var(--accent-hover); }
+
+ul, ol { padding-left: 24px; margin-bottom: 16px; }
+li { margin-bottom: 5px; }
+
+strong { font-weight: 600; }
+
+code {
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+  font-size: 0.85em;
+  background: var(--code-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+pre {
+  background: var(--pre-bg);
+  border-radius: 10px;
+  padding: 18px 22px;
+  overflow-x: auto;
+  margin-bottom: 22px;
+  line-height: 1.55;
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13.5px;
+  color: var(--pre-text);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 22px;
+  font-size: 14px;
+}
+
+th {
+  text-align: left;
+  padding: 10px 16px;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  font-weight: 600;
+}
+
+td {
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  vertical-align: top;
+}
+
+blockquote {
+  border-left: 3px solid var(--accent);
+  background: var(--code-bg);
+  border-radius: 0 8px 8px 0;
+  padding: 14px 20px;
+  margin-bottom: 20px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+blockquote p { margin-bottom: 0; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 36px 0;
+}
+
+/* ── Hero (home page) ── */
+
+.hero {
+  padding: 24px 0 40px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 40px;
+}
+
+.hero h1 { font-size: 2.6em; margin-bottom: 14px; }
+
+.hero .tagline {
+  font-size: 1.15em;
+  color: var(--muted);
+  margin-bottom: 28px;
+  max-width: 500px;
+}
+
+.install-block {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--pre-bg);
+  border-radius: 10px;
+  padding: 14px 20px;
+  max-width: 520px;
+  margin-bottom: 28px;
+}
+
+.install-block code {
+  background: none;
+  border: none;
+  color: var(--pre-text);
+  font-size: 14px;
+  flex: 1;
+}
+
+.btn {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  padding: 9px 20px;
+  border-radius: 7px;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.btn:hover { background: var(--accent-hover); color: #fff; text-decoration: none; }
+
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  margin-left: 8px;
+}
+
+.btn-outline:hover { background: var(--border); color: var(--text); }
+
+/* ── Feature grid ── */
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  margin: 32px 0;
+}
+
+.feature-card {
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.feature-card h3 {
+  margin: 0 0 6px;
+  font-size: 0.95em;
+}
+
+.feature-card p {
+  font-size: 13.5px;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* ── Callout ── */
+
+.callout {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  padding: 14px 20px;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+.callout p { margin: 0; }
+
+/* ── Responsive ── */
+
+@media (max-width: 768px) {
+  .sidebar { display: none; }
+  .main { margin-left: 0; padding: 28px 20px 60px; }
+  h1 { font-size: 1.8em; }
+  .hero h1 { font-size: 2em; }
+  .features { grid-template-columns: 1fr; }
+}

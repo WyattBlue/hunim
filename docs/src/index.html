@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hunim — Static Site Generator</title>
+  <meta name="description" content="Hunim is a small, fast, unopinionated static site generator written in Nim.">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  {{ nav }}
+  <main class="main">
+    <div class="hero">
+      <h1>Hunim</h1>
+      <p class="tagline">A small, fast, and unopinionated static site generator written in Nim.</p>
+      <div class="install-block">
+        <code>nimble install https://github.com/WyattBlue/hunim</code>
+      </div>
+      <a href="/getting-started" class="btn">Get Started</a>
+      <a href="https://github.com/WyattBlue/hunim" class="btn btn-outline">GitHub</a>
+    </div>
+
+    <div class="features">
+      <div class="feature-card">
+        <h3>Tiny binary</h3>
+        <p>The entire generator compiles to a single ~437 KB executable with no runtime dependencies.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Markdown + Frontmatter</h3>
+        <p>Write content in Markdown with YAML frontmatter for titles, dates, authors, and more.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Go-style templates</h3>
+        <p>Use <code>{{ .Variable }}</code> syntax to build reusable HTML layouts and components.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Blog feeds &amp; RSS</h3>
+        <p>Mark any directory as a feed and Hunim automatically generates an RSS feed and index page.</p>
+      </div>
+      <div class="feature-card">
+        <h3>NimScript execution</h3>
+        <p>Run <code>.nims</code> scripts at build time and inline their output directly into pages.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Dev server</h3>
+        <p>Built-in dev server on port 8080 with auto-reload on file changes.</p>
+      </div>
+    </div>
+
+    <h2>Quick start</h2>
+    <p>Install Hunim via Nimble, then create your first site:</p>
+    <pre><code>nimble install https://github.com/WyattBlue/hunim
+hunim newsite mysite
+cd mysite
+hunim server</code></pre>
+    <p>Open <code>http://127.0.0.1:8080</code> in your browser. Edit files in <code>src/</code> and the page will reload automatically. When you are ready to publish, run:</p>
+    <pre><code>hunim</code></pre>
+    <p>Output is written to the <code>public/</code> directory, ready to deploy to any static host.</p>
+
+    <p><a href="/getting-started" class="btn">Read the docs</a></p>
+  </main>
+</body>
+</html>
