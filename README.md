@@ -6,7 +6,7 @@ Hunim is a static site generator written in [Nim](https://nim-lang.org). Small, 
 ## Choose How to Install
 
 ```
-nimble install https://github.com/WyattBlue/hunim
+nimble install https://github.com/basswood-io/hunim
 ```
 
 If you want to contribute, fork this repo, clone it, then run:

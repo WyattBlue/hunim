@@ -12,13 +12,13 @@ Hunim is a static site generator written in [Nim](https://nim-lang.org). It conv
 Install via Nimble (requires the Nim toolchain):
 
 ```
-nimble install https://github.com/WyattBlue/hunim
+nimble install https://github.com/basswood-io/hunim
 ```
 
 To build from source, clone the repo and run:
 
 ```
-git clone https://github.com/WyattBlue/hunim
+git clone https://github.com/basswood-io/hunim
 cd hunim
 nimble make
 ```
