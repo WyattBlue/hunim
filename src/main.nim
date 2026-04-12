@@ -748,6 +748,8 @@ proc getMimeType(filename: string): string =
     return "image/webp"
   of ".avif":
     return "image/avif"
+  of ".wasm":
+    return "application/wasm"
   of ".ttf":
     return "font/ttf"
   of ".pdf":
@@ -828,14 +830,22 @@ proc server() =
     # Build full file path
     let filePath = "public" & path
 
+    proc addCrossOriginHeaders(headers: var HttpHeaders) =
+      headers["Cross-Origin-Opener-Policy"] = "same-origin"
+      headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+
     # If path is a directory, try to serve index.html
     if dirExists(filePath):
       let indexPath = filePath / "index.html"
       let (code, content, mimeType) = serveFile(indexPath)
-      await req.respond(code, content, newHttpHeaders([("Content-Type", mimeType)]))
+      var headers = newHttpHeaders([("Content-Type", mimeType)])
+      addCrossOriginHeaders(headers)
+      await req.respond(code, content, headers)
     else:
       let (code, content, mimeType) = serveFile(filePath)
-      await req.respond(code, content, newHttpHeaders([("Content-Type", mimeType)]))
+      var headers = newHttpHeaders([("Content-Type", mimeType)])
+      addCrossOriginHeaders(headers)
+      await req.respond(code, content, headers)
 
     # echo &"{req.reqMethod} {req.url.path} -> {filePath}"
 
